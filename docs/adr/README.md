@@ -60,7 +60,7 @@
 | [0050](0050-store-app-ships-as-a-disk-image.md) | 스토어 앱만 dmg 로도 내보낸다 | 수락됨 | 2026-09-16 |
 | [0051](0051-console-lists-only-what-you-can-touch.md) | 웹 콘솔 목록은 손댈 수 있는 앱만 보여준다 | 수락됨 | 2026-09-17 |
 | [0052](0052-tell-long-polls-that-shutdown-started.md) | 종료가 시작됐다는 것을 긴 폴링에 알린다 | 수락됨 | 2026-09-17 |
-| [0053](0053-make-app-ids-where-they-are-needed.md) | 포털 App ID 는 그것이 필요해진 자리에서 만든다 | 수락됨 | 2026-09-17 |
+| [0053](0053-make-app-ids-where-they-are-needed.md) | 포털 App ID 는 그것이 필요해진 자리에서 만든다 | 일부 대체됨(ADR-0084) | 2026-09-17 |
 | [0054](0054-logging-out-of-the-provider-is-a-choice.md) | 공급자 세션까지 끊을지는 조직이 정한다 | 수락됨 | 2026-09-17 |
 | [0055](0055-unique-names-among-usable-tokens.md) | 쓸 수 있는 토큰끼리는 이름이 겹치지 않게 한다 | 수락됨 | 2026-09-16 |
 | [0056](0056-console-visitors-are-developers.md) | 웹 콘솔로 들어온 사람은 개발자로 둔다 | 수락됨 | 2026-09-21 |
@@ -91,6 +91,7 @@
 | [0081](0081-monthly-store-digest-is-a-separate-opt-in.md) | 스토어 월간 소식은 주간과 따로 켜는 칸으로 두고, 같은 글을 한 달치로 묶는다 | 수락됨 | 2026-10-27 |
 | [0082](0082-send-release-news-later-for-the-latest-release.md) | 알리지 않고 출시한 가장 최근 출시본은 나중에 소식을 보낼 수 있다 | 수락됨 | 2026-11-03 |
 | [0083](0083-signing-attempts-split-current-and-history.md) | 서명 시도를 현재와 지난 시도로 나눠 보여준다 | 수락됨 | 2026-11-05 |
+| [0084](0084-store-issues-provisioning-profiles.md) | 프로비저닝 프로필은 스토어가 발급해 보관하고, 워커가 서명 직전에 넣는다 | 수락됨 | 2026-11-23 |
 
 ## 언제 쓰나
 
