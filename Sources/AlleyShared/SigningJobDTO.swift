@@ -47,6 +47,15 @@ public struct SigningJobDTO: Codable, Sendable, Identifiable, Equatable {
     /// 옵셔널이라 합성 디코더가 `decodeIfPresent` 로 읽는다. 이 필드를 모르는 예전
     /// 서버가 보낸 지시서도 그대로 해석된다.
     public var entitlements: String?
+    /// 번들에 넣고 서명할 프로비저닝 프로필. 파일 바이트의 base64 다 (ADR-0084).
+    ///
+    /// 스토어가 그 앱에 발급해 둔 것이 있을 때만 실린다. 워커는 이것을
+    /// `Contents/embedded.provisionprofile` 에 넣는다. 번들에 개발자가 넣어 온 것이
+    /// 있어도 **이것으로 덮어쓴다.** 이 프로필은 워커가 쓰는 Developer ID 인증서로
+    /// 만들었다는 것이 확실하고, 개발자가 넣은 것은 그렇다는 보장이 없다.
+    ///
+    /// 옵셔널이라 이 필드를 모르는 예전 워커는 지금까지처럼 번들에 든 것만 본다.
+    public var provisioningProfile: String?
     public var expiresAt: Date
 
     public init(
@@ -61,6 +70,7 @@ public struct SigningJobDTO: Codable, Sendable, Identifiable, Equatable {
         diskImageUploadURL: String? = nil,
         iconUploadURL: String? = nil,
         entitlements: String? = nil,
+        provisioningProfile: String? = nil,
         expiresAt: Date
     ) {
         self.id = id
@@ -74,6 +84,7 @@ public struct SigningJobDTO: Codable, Sendable, Identifiable, Equatable {
         self.diskImageUploadURL = diskImageUploadURL
         self.iconUploadURL = iconUploadURL
         self.entitlements = entitlements
+        self.provisioningProfile = provisioningProfile
         self.expiresAt = expiresAt
     }
 }
@@ -119,6 +130,12 @@ public struct SigningJobUpdate: Codable, Sendable {
     ///
     /// dmg 와 같은 이유로 서버가 스토리지에서 한 번 더 확인한다.
     public var iconSize: Int64?
+    /// 프로필이 있어야 하는데 없어서(또는 허용되지 않아서) 멈췄을 때, 그 권한 키들.
+    ///
+    /// 서버는 이것으로 그 앱에 프로필을 발급할 자리를 낸다 (ADR-0084). 업로더가
+    /// entitlements 를 따로 주지 않은 앱은 서버가 권한을 알 길이 없다. 번들의 기존
+    /// 서명에 붙어 있던 권한은 워커만 읽는다.
+    public var profileEntitlements: [String]?
 
     public init(
         state: SigningJobState,
@@ -132,7 +149,8 @@ public struct SigningJobUpdate: Codable, Sendable {
         bundleMetadata: BundleMetadata? = nil,
         diskImageSHA256: String? = nil,
         diskImageSize: Int64? = nil,
-        iconSize: Int64? = nil
+        iconSize: Int64? = nil,
+        profileEntitlements: [String]? = nil
     ) {
         self.state = state
         self.phase = phase
@@ -146,6 +164,7 @@ public struct SigningJobUpdate: Codable, Sendable {
         self.diskImageSHA256 = diskImageSHA256
         self.diskImageSize = diskImageSize
         self.iconSize = iconSize
+        self.profileEntitlements = profileEntitlements
     }
 }
 

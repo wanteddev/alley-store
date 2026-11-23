@@ -73,14 +73,47 @@ public enum EntitlementsPlist {
     ///
     /// `com.apple.developer.` 로 시작하는 것들은 Apple 이 팀 단위로 허가하는 기능이라,
     /// 그 허가를 담은 프로필이 번들 안에 들어 있어야 한다. `com.apple.security.` 로
-    /// 시작하는 샌드박스·하드닝 권한은 프로필 없이도 서명된다.
+    /// 시작하는 샌드박스·하드닝 권한과 App Group 은 프로필 없이도 서명된다.
+    ///
+    /// **접두사만으로는 모자란다.** `keychain-access-groups` 와
+    /// `com.apple.application-identifier` 는 접두사가 다른데도 프로필이 있어야 한다
+    /// (TN3125). 예전 기준은 이 둘을 놓쳐서, 서명은 통과하고 사용자의 맥에서 실행할 때
+    /// 죽는 앱을 내보낼 수 있었다. 반대로 `com.apple.developer.` 중에 프로필 없이 되는
+    /// 것은 Apple 문서에 없다. 그래서 "접두사로만 판단해 과하게 막는다" 는 걱정은
+    /// 근거가 없었다.
     ///
     /// **서명하는 쪽과 화면이 같은 기준을 써야 해서 여기 둔다.** 워커는 이것으로
-    /// 서명을 멈출지 정하고(`Entitlements.validate`), 콘솔은 이것으로 포털에 App ID 를
-    /// 등록하라고 권할지 정한다. 기준이 갈리면 "서명은 막혔는데 화면은 아무 말도
-    /// 안 하는" 자리가 생긴다.
+    /// 서명을 멈출지 정하고(`Entitlements.validate`), 콘솔은 이것으로 프로필을 발급할
+    /// 자리를 낼지 정한다. 기준이 갈리면 "서명은 막혔는데 화면은 아무 말도 안 하는"
+    /// 자리가 생긴다.
     public static func requiresProvisioningProfile(_ key: String) -> Bool {
-        key.hasPrefix("com.apple.developer.")
+        key.hasPrefix("com.apple.developer.") || restrictedWithoutPrefix.contains(key)
+    }
+
+    /// 접두사가 `com.apple.developer.` 가 아닌데 프로필이 있어야 하는 권한.
+    static let restrictedWithoutPrefix: Set<String> = [
+        "com.apple.application-identifier",
+        "keychain-access-groups",
+    ]
+
+    /// Developer ID 로 배포하는 앱은 아예 쓸 수 없는 권한.
+    ///
+    /// Apple 의 "Supported capabilities (macOS)" 표에서 Developer ID 칸이 비어 있는
+    /// 것들이다 (2026-11 확인). 이런 키는 프로필을 몇 번 발급해도 허용되지 않아서,
+    /// 프로필을 발급하라고 안내하면 사람이 헛걸음을 한다. 권한을 빼는 것이 유일한 길이다.
+    public static let unsupportedForDeveloperID: Set<String> = [
+        "com.apple.developer.applesignin",
+        "com.apple.developer.weatherkit",
+        "com.apple.developer.game-center",
+        "com.apple.developer.homekit",
+        "com.apple.developer.sensitivecontentanalysis.client",
+        "com.apple.developer.shared-with-you",
+    ]
+
+    public static func unsupportedForDeveloperID(
+        in keys: some Sequence<String>
+    ) -> [String] {
+        keys.filter(unsupportedForDeveloperID.contains).sorted()
     }
 
     public static func requiringProvisioningProfile(
