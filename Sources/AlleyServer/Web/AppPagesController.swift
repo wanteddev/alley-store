@@ -26,7 +26,8 @@ struct AppPagesController: RouteCollection, Sendable {
         pages.get(":appID", "edit", use: editForm)
         pages.post(":appID", "edit", use: submitEdit)
         pages.post(":appID", "delete", use: deleteApp)
-        pages.post(":appID", "portal-app-id", use: registerPortalAppID)
+        pages.post(":appID", "provisioning-profile", use: issueProfile)
+        pages.post(":appID", "versions", ":versionID", "issue-profile", use: issueProfileAndRetry)
         pages.post(":appID", "deploy-tokens", use: issueDeployToken)
         pages.post(":appID", "deploy-tokens", ":tokenID", "revoke", use: revokeDeployToken)
         pages.get(":appID", "member-candidates", use: memberCandidates)
@@ -538,14 +539,31 @@ struct AppPagesController: RouteCollection, Sendable {
             on: request
         )
 
-        // 프로필이 필요한 권한을 쓰는 앱만 포털에 App ID 가 있어야 한다 (ADR-0005).
-        // 그 판단은 올린 entitlements 가 들어온 뒤에야 할 수 있어서, 앱을 만드는
-        // 화면이 아니라 여기에 둔다.
-        let profileEntitlements = canManage
-            ? EntitlementsPlist.requiringProvisioningProfile(
-                in: Set(versions.compactMap(\.entitlements).flatMap(EntitlementsPlist.keys(of:)))
+        // 발급하고 돌려보낸 자리 (PRG). **주소를 그대로 믿지 않는다.** 이 앱의 프로필이
+        // 방금(10분 안) 바뀌었을 때만 알린다. 남은 주소로 다시 들어와 지난 발급을
+        // 방금 한 것처럼 보이지 않게 한다.
+        var portalNotice = portalNotice
+        if portalNotice == nil, canManage,
+           request.query[String.self, at: "profile"] == "issued",
+           let issuedAt = try await IssuedProfile.query(on: request.db)
+               .filter(\.$app.$id == app.requireID())
+               .first()?.updatedAt,
+           Date().timeIntervalSince(issuedAt) < 600
+        {
+            portalNotice = ProfileIssuance.Outcome.issuedNotice
+        }
+
+        // 프로필이 필요한 권한을 쓰는 앱에만 프로필 자리를 낸다 (ADR-0005, ADR-0084).
+        // 그 판단은 entitlements 가 들어온 뒤에야 할 수 있어서, 앱을 만드는 화면이
+        // 아니라 여기에 둔다. 업로더가 준 것과 워커가 번들에서 읽어 보고한 것을 합친다.
+        let profile: ProfileSection? = canManage
+            ? try await ProfileSection.make(
+                for: app,
+                keys: ProfileIssuance.requiredKeys(of: versions),
+                isPortalConfigured: request.application.alleyConfig.appStoreConnect != nil,
+                on: request.db
             )
-            : []
+            : nil
         return try await request.view.render(
             "app-detail",
             AppDetailContext(
@@ -594,7 +612,7 @@ struct AppPagesController: RouteCollection, Sendable {
                 entitlementsElectronTemplate: EntitlementsGuidance.electronTemplate,
                 entitlementsElectronNotes: EntitlementsGuidance.electronTemplateNotes,
                 entitlementsElectronCaveat: EntitlementsGuidance.electronTemplateCaveat,
-                profileEntitlements: profileEntitlements,
+                profile: profile,
                 // 연동이 없으면 눌러도 안 되는 버튼이라 아예 그리지 않는다.
                 isPortalConfigured: request.application.alleyConfig.appStoreConnect != nil,
                 portalError: portalError,
@@ -743,40 +761,130 @@ struct AppPagesController: RouteCollection, Sendable {
         ).get()
     }
 
-    // MARK: - 포털 App ID
+    // MARK: - 프로비저닝 프로필
 
-    /// 이 앱의 번들 ID 로 Apple 포털에 explicit App ID 를 만든다 (ADR-0005).
+    /// 이 앱의 프로비저닝 프로필을 발급한다 (ADR-0084).
     ///
-    /// **값을 묻지 않는다.** 번들 ID 와 이름은 앱을 등록할 때 이미 받았다. 다시 적게
-    /// 하면 오타가 그대로 Apple 계정에 남고, 거기서 지우는 것은 Account Holder 나
-    /// Admin 만 할 수 있다.
+    /// **값을 묻지 않는다.** 번들 ID 와 이름은 앱을 등록할 때 받았고, 켤 capability 는
+    /// entitlements 에서 나온다. App ID 가 없으면 만들고, 모자란 capability 를 켜고,
+    /// 프로필을 만들어 보관하는 데까지 한 번에 간다.
     ///
     /// 앱 화면에 두는 이유는 판단 시점 때문이다. 프로필이 필요한지는 entitlements 를
-    /// 봐야 아는데, 그것은 버전을 올릴 때 들어온다. 앱을 만드는 화면에는 아직 없다.
+    /// 봐야 아는데, 그것은 버전을 올릴 때나 워커가 번들을 연 뒤에 들어온다.
     @Sendable
-    func registerPortalAppID(request: Request) async throws -> Response {
+    func issueProfile(request: Request) async throws -> Response {
         let user = try request.requireUser()
         let app = try await request.findApp()
         try app.requireManageAccess(for: user)
 
+        let versions = try await Version.query(on: request.db)
+            .filter(\.$app.$id == app.requireID())
+            .all()
         do {
-            let registered = try await PortalRegistration.registerBundleID(
-                RegisterBundleIDRequest(identifier: app.bundleID, name: app.name),
-                using: try request.appStoreConnect(),
-                by: user,
-                logger: request.logger
+            _ = try await issueProfile(
+                for: app, keys: ProfileIssuance.requiredKeys(of: versions), by: user, on: request
             )
-            let view = try await renderDetail(
-                on: request,
-                issuedToken: nil,
-                portalNotice: "'\(registered.identifier)' 를 Apple 계정에 만들었습니다."
-            )
-            return htmlResponse(view, status: .created)
-        } catch let abort as any AbortError where abort.status.code < 500 {
+        } catch let abort as any AbortError where Self.showsInPlace(abort) {
             let view = try await renderDetail(
                 on: request, issuedToken: nil, portalError: abort.reason
             )
             return htmlResponse(view, status: abort.status)
+        }
+        // 돌려보낸다. 결과 화면을 그대로 주면 새로고침이 발급을 한 번 더 한다. 그때마다
+        // Apple 에 새 프로필이 생기고 옛 것이 지워진다.
+        return request.redirect(to: Self.afterIssuePath(app))
+    }
+
+    /// 프로필이 없어 멈춘 버전 옆에서 누른다. 발급하고 그 버전을 다시 서명 큐에 넣는다.
+    ///
+    /// **실패한 자리에 버튼을 둔다.** 그 사람이 지금 하려는 일은 "이 버전을 서명받기"
+    /// 이고, 발급은 그 길에 놓인 한 단계다. 앱 상세 아래쪽 구역까지 내려가 발급하고
+    /// 다시 올라와 재시도를 누르게 하면 두 번 일한다.
+    ///
+    /// **Apple 화면에서 먼저 할 일이 남으면 큐에 넣지 않는다.** iCloud 컨테이너를 아직
+    /// 연결하지 않았다면 다시 시도해도 워커의 대조에서 또 멈춘다. 그때는 무엇을 하라는
+    /// 말과 함께 화면에 남는다.
+    @Sendable
+    func issueProfileAndRetry(request: Request) async throws -> Response {
+        let user = try request.requireUser()
+        let app = try await request.findApp()
+        try app.requireManageAccess(for: user)
+
+        let version = try await request.findVersion()
+        guard version.$app.id == (try app.requireID()) else {
+            throw Abort(.notFound, reason: "버전을 찾을 수 없습니다.")
+        }
+        guard version.state == .failed else {
+            throw Abort(
+                .conflict,
+                reason: "실패한 버전만 다시 시도할 수 있습니다. 현재 상태: \(version.state.rawValue)"
+            )
+        }
+
+        let outcome: ProfileIssuance.Outcome
+        do {
+            // 이 버전이 요구하는 것으로 발급한다. 다시 시도할 것이 이 버전이다.
+            outcome = try await issueProfile(
+                for: app, keys: ProfileIssuance.requiredKeys(of: version), by: user, on: request
+            )
+        } catch let abort as any AbortError where Self.showsInPlace(abort) {
+            let view = try await renderDetail(
+                on: request, issuedToken: nil, portalError: abort.reason
+            )
+            return htmlResponse(view, status: abort.status)
+        }
+
+        guard !outcome.needsPortalWork else {
+            let view = try await renderDetail(
+                on: request,
+                issuedToken: nil,
+                portalNotice: outcome.notice + " " + Self.retryHeldBack
+            )
+            return htmlResponse(view, status: .ok)
+        }
+
+        try version.transition(to: .uploaded)
+        try await version.save(on: request.db)
+        try await SigningJob.enqueue(versionID: try version.requireID(), on: request.db)
+        return request.redirect(to: Self.afterIssuePath(app))
+    }
+
+    /// 다시 시도를 미뤘을 때 덧붙이는 말.
+    static let retryHeldBack = """
+        이 버전은 아직 다시 시도하지 않았습니다. 위의 일을 마치고 '프로필 다시 발급' 을 \
+        누른 뒤 다시 시도하세요.
+        """
+
+    static func afterIssuePath(_ app: App) -> String {
+        "/apps/\((try? app.requireID().uuidString) ?? "")?profile=issued#provisioning-profile"
+    }
+
+    /// 화면에 그대로 띄울 실패인가.
+    ///
+    /// 사람이 고칠 수 있는 것(4xx)과 연동이 없는 것(503)을 그 자리에 띄운다. 무엇을
+    /// 고치면 되는지 문장에 있다. Apple 이 거절한 것은 422 로 바꿔 둔다
+    /// (`issueProfile(for:keys:by:on:)`). 5xx 로 두면 앞단 프록시가 자기 오류 화면으로
+    /// 갈아 끼워 그 문장이 사라질 수 있다.
+    static func showsInPlace(_ abort: any AbortError) -> Bool {
+        abort.status.code < 500 || abort.status == .serviceUnavailable
+    }
+
+    private func issueProfile(
+        for app: App, keys: [String], by user: User, on request: Request
+    ) async throws -> ProfileIssuance.Outcome {
+        do {
+            return try await ProfileIssuance.issue(
+                for: app,
+                keys: keys,
+                using: try request.appStoreConnect(),
+                by: user,
+                on: request.db,
+                logger: request.logger
+            )
+        } catch let error as AppStoreConnectClient.ClientError {
+            // Apple 이 거절한 이유는 사람이 고칠 수 있는 것이 대부분이다(키 역할, 이미
+            // 있는 이름). 500 으로 덮으면 무엇을 고칠지 화면에서 사라진다.
+            throw Abort(.unprocessableEntity, reason: error.description)
         }
     }
 
@@ -1365,6 +1473,8 @@ struct VersionRow: Encodable {
     var canRetry: Bool
     /// 권한이 모자라 실패했나. 그때만 재시도 자리에 entitlements 칸을 낸다 (ADR-0036).
     var needsEntitlements: Bool
+    /// 프로필이 없거나 모자라서 멈췄다. 그 자리에 발급 버튼이 선다 (ADR-0084).
+    var needsProfile: Bool
     /// 지난 시도들. 최근 것이 위로 온다. 현재 시도는 위 칸이 그리고, 지난 시도는
     /// 접어서 "N번째 시도" 로 골라 본다 (이슈 #85). 재시도가 없었으면 비어 있다.
     var pastAttempts: [SigningAttemptView]
@@ -1421,6 +1531,7 @@ struct VersionRow: Encodable {
         self.hasFailure = self.failureTitle != nil || self.failureReason != nil
         self.canRetry = version.state == .failed
         self.needsEntitlements = showsFailure && currentCode == .entitlementsRejected
+        self.needsProfile = showsFailure && currentCode == .provisioningProfileRequired
         self.pastAttempts = past
         self.downloadCount = downloadCount
 
@@ -1648,11 +1759,11 @@ struct AppDetailContext: Encodable {
     var entitlementsElectronNotes: String
     /// 본보기 뒤에 붙는 한 줄. 그대로 쓰면 안 되는 경우.
     var entitlementsElectronCaveat: String
-    /// 이 앱이 쓰는 권한 중 프로비저닝 프로필을 요구하는 것들 (ADR-0005).
+    /// 프로비저닝 프로필 구역 (ADR-0084).
     ///
-    /// 비어 있으면 포털에 App ID 를 만들 이유가 없고, 그 자리를 그리지 않는다.
-    /// 관리할 수 없는 사람에게는 늘 비어 있다.
-    var profileEntitlements: [String]
+    /// 프로필이 필요한 권한을 안 쓰고 발급한 것도 없으면 nil 이고, 그 자리를 그리지
+    /// 않는다. 관리할 수 없는 사람에게는 늘 nil 이다.
+    var profile: ProfileSection?
     /// App Store Connect 연동이 서 있는가.
     var isPortalConfigured: Bool
     /// App ID 를 만들다 막힌 이유.
