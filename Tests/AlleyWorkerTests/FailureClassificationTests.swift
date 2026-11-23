@@ -15,12 +15,30 @@ struct FailureClassificationTests {
         #expect(SigningFailureCode.classify(ambiguous) == .bundleLayoutInvalid)
     }
 
-    @Test("프로필이 없는 권한은 entitlements 문제다")
-    func missingProfileIsEntitlements() {
-        let error = Entitlements.ValidationError.missingProfile(
-            bundle: "도구.app", keys: ["com.apple.developer.icloud-services"]
+    /// 고칠 것이 앱이 아니라 스토어의 프로필이다 (ADR-0084). entitlements 갈래로
+    /// 두면 화면이 "entitlements 를 붙여 다시 시도" 하는 칸을 내미는데, 그것은 헛걸음이다.
+    @Test("프로필이 없거나 모자라면 프로필 갈래다")
+    func missingProfileIsProfileProblem() {
+        let keys = ["com.apple.developer.icloud-services"]
+        let errors: [Entitlements.ValidationError] = [
+            .missingProfile(bundle: "도구.app", keys: keys),
+            .profileDoesNotAllow(bundle: "도구.app", keys: keys, disallowed: keys),
+            .unreadableProfile(bundle: "도구.app", keys: keys),
+        ]
+        for error in errors {
+            #expect(SigningFailureCode.classify(error) == .provisioningProfileRequired)
+            #expect(error.profileKeys == keys)
+        }
+    }
+
+    @Test("Developer ID 로 못 쓰는 권한은 entitlements 갈래다")
+    func unsupportedIsEntitlementsProblem() {
+        let error = Entitlements.ValidationError.unsupportedForDeveloperID(
+            bundle: "도구.app", keys: ["com.apple.developer.applesignin"]
         )
+        // 프로필로 풀리지 않는다. 서버가 발급 자리를 내면 안 되므로 키를 싣지 않는다.
         #expect(SigningFailureCode.classify(error) == .entitlementsRejected)
+        #expect(error.profileKeys == nil)
     }
 
     @Test("파이프라인 오류는 자기가 들고 있는 갈래를 그대로 쓴다")

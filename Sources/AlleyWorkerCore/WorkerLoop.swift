@@ -146,7 +146,10 @@ public struct WorkerLoop: Sendable {
                     state: .failed,
                     log: reason,
                     failureReason: summarize(reason),
-                    failureCode: code
+                    failureCode: code,
+                    // 프로필 때문에 멈췄으면 어떤 권한이었는지 함께 보낸다. 서버는
+                    // 이것을 보고 그 앱에 프로필을 발급할 자리를 낸다 (ADR-0084).
+                    profileEntitlements: (error as? Entitlements.ValidationError)?.profileKeys
                 ),
                 for: job.id
             )

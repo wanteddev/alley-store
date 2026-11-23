@@ -18,9 +18,10 @@ extension SigningFailureCode {
         case let pipeline as SigningPipeline.PipelineError:
             return pipeline.failureCode
 
-        case is Entitlements.ValidationError:
-            // 프로필이 필요한 권한인데 번들에 프로필이 없다. 앱을 다시 빌드해야 한다.
-            return .entitlementsRejected
+        case let validation as Entitlements.ValidationError:
+            // 프로필이 없거나 모자라면 프로필 갈래(고칠 것은 스토어의 프로필),
+            // Developer ID 로 못 쓰는 권한이면 entitlements 갈래(고칠 것은 앱)다.
+            return validation.failureCode
 
         case is AppBundle.BundleError:
             // zip 안에 `.app` 이 없거나 여러 개다.
