@@ -218,6 +218,10 @@ private func configureMigrations(_ app: Application) {
     // 앱 상세에 동영상을 둔다 (이슈 #73, ADR-0079).
     app.migrations.add(AddAppVideo())
     app.migrations.add(AddMonthlyDigestPreferenceToUser())
+
+    // 스토어가 프로비저닝 프로필을 발급해 보관한다 (이슈 #90, ADR-0084).
+    app.migrations.add(CreateIssuedProfile())
+    app.migrations.add(AddVersionProfileEntitlements())
 }
 
 /// 미들웨어 스택.

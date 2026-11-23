@@ -216,6 +216,12 @@ public struct WorkerController: RouteCollection, Sendable {
         let settings = try await request.storeSettings()
         let pending = job.version.app.bundleIDPending
 
+        // 스토어가 발급해 둔 프로필이 있으면 함께 보낸다 (ADR-0084). 워커가 번들에 넣고
+        // 서명한다. 없으면 워커는 번들에 든 것만 본다.
+        let profile = try await IssuedProfile.query(on: request.db)
+            .filter(\.$app.$id == appID)
+            .first()
+
         return SigningJobDTO(
             id: try job.requireID(),
             versionID: versionID,
@@ -230,6 +236,7 @@ public struct WorkerController: RouteCollection, Sendable {
             // 올린 사람이 준 것이 있으면 실어 보낸다. 미서명 업로드에는 워커가 읽어낼
             // 기존 서명이 없어서, 이것 없이는 권한 없이 서명된다 (ADR-0020).
             entitlements: job.version.entitlements,
+            provisioningProfile: profile?.content.base64EncodedString(),
             // 가장 먼저 만료되는 쪽이 이 잡의 유효 기간이다.
             expiresAt: [download.expiresAt, upload.expiresAt, diskImage?.expiresAt, icon.expiresAt]
                 .compactMap { $0 }.min() ?? download.expiresAt
@@ -256,6 +263,13 @@ public struct WorkerController: RouteCollection, Sendable {
         case .succeeded:
             try await finishSuccessfully(job, update: update, on: request)
         case .failed:
+            // 프로필 때문에 멈췄으면 어떤 권한이었는지 버전에 둔다. 앱 상세가 이것을 보고
+            // 프로필을 발급할 자리를 낸다 (ADR-0084).
+            if let keys = update.profileEntitlements, !keys.isEmpty {
+                job.version.profileEntitlements = EntitlementsPlist
+                    .requiringProvisioningProfile(in: keys)
+                try await job.version.save(on: request.db)
+            }
             try await fail(job, reason: update.failureReason, code: update.failureCode, on: request)
         case .queued:
             throw Abort(.badRequest, reason: "워커가 잡을 다시 큐로 되돌릴 수는 없습니다.")
