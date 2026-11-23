@@ -44,6 +44,7 @@ struct AdminPagesController: RouteCollection, Sendable {
         pages.get("stats", use: stats)
         pages.get("portal", use: portal)
         pages.post("portal", "bundle-ids", use: registerWildcardBundleID)
+        pages.post("portal", "membership", use: saveMembershipExpiry)
     }
 
     /// 관리 화면의 첫 장은 설정이다. 역할 관리는 사람이 들어올 때마다 하는 일이 아니다.
@@ -765,7 +766,41 @@ struct AdminPagesController: RouteCollection, Sendable {
     @Sendable
     func portal(request: Request) async throws -> View {
         _ = try request.requireAdmin()
-        return try await renderPortal(error: nil, on: request)
+        return try await renderPortal(
+            error: nil,
+            savedMembership: request.query[String.self, at: "saved"] == "membership",
+            on: request
+        )
+    }
+
+    /// 멤버십 만료일을 적는다 (ADR-0084).
+    ///
+    /// Apple 이 API 로 주지 않는 값이라 사람이 적는다. 비우는 것도 받는다. 그러면
+    /// 만료 감시가 "비어 있다" 고 알리기 시작한다.
+    @Sendable
+    func saveMembershipExpiry(request: Request) async throws -> Response {
+        let admin = try request.requireAdmin()
+        struct Form: Content {
+            var membershipExpiresOn: String?
+        }
+        let form = try request.content.decode(Form.self)
+
+        let value: String?
+        do {
+            value = try MembershipExpiry.normalized(form.membershipExpiresOn)
+        } catch let abort as any AbortError {
+            let view = try await renderPortal(error: abort.reason, on: request)
+            return htmlResponse(view, status: abort.status)
+        }
+
+        let settings = try await request.storeSettings()
+        settings.membershipExpiresOn = value
+        settings.$updatedBy.id = try admin.requireID()
+        try await settings.save(on: request.db)
+        request.logger.notice(
+            "멤버십 만료일을 바꿨습니다 [\(value ?? "비움"), 관리자: \(admin.email)]"
+        )
+        return request.redirect(to: "/admin/portal?saved=membership")
     }
 
     /// 스토어 앱 전체를 덮는 와일드카드 App ID 하나를 만든다.
@@ -806,7 +841,11 @@ struct AdminPagesController: RouteCollection, Sendable {
         return request.redirect(to: "/admin/portal")
     }
 
-    private func renderPortal(error: String?, on request: Request) async throws -> View {
+    private func renderPortal(
+        error: String?,
+        savedMembership: Bool = false,
+        on request: Request
+    ) async throws -> View {
         var certificates: [CertificateRow] = []
         var bundleIDs: [ASCBundleID] = []
         var connectionError: String?
@@ -844,6 +883,8 @@ struct AdminPagesController: RouteCollection, Sendable {
                 storeBundleIDs: groupedIDs.store,
                 otherBundleIDs: groupedIDs.other,
                 registerableWildcard: canRegisterWildcard ? wildcard : nil,
+                membership: MembershipRow(expiresOn: settings.membershipExpiresOn),
+                savedMembership: savedMembership,
                 connectionError: connectionError,
                 error: error
             )
@@ -1250,7 +1291,7 @@ enum PortalGrouping {
         return Certificates(
             signing: certificates.filter(\.isDeveloperID),
             other: other,
-            otherExpiringSoon: other.count { ($0.daysLeft ?? .max) < expiringSoonDays }
+            otherExpiringSoon: other.count { ($0.daysLeft ?? .max) <= expiringSoonDays }
         )
     }
 
@@ -1303,8 +1344,10 @@ struct CertificateRow: Encodable {
         self.daysLeft = days
         self.isDeveloperID = certificate.isDeveloperID
         // 인증서 갱신은 사람의 손이 여러 번 필요한 일이다. 한 달 전에는 알아야 한다.
+        // 만료 감시가 "30일 뒤 만료됩니다" 를 보내는 날 화면도 빨개야 하므로 30일을
+        // 포함한다 (`ExpiryStage.warnings`).
         self.needsAttention =
-            certificate.isDeveloperID && (days ?? .max) < PortalGrouping.expiringSoonDays
+            certificate.isDeveloperID && (days ?? .max) <= PortalGrouping.expiringSoonDays
     }
 }
 
@@ -1349,9 +1392,33 @@ struct PortalPageContext: Encodable {
     /// 못했으면 nil 이고 그때는 만드는 자리를 아예 그리지 않는다.
     var registerableWildcard: String?
     /// Apple 과 이야기하지 못한 이유.
+    /// 관리자가 적어둔 멤버십 만료일 (ADR-0084). 연동과 상관없이 늘 그린다.
+    var membership: MembershipRow
+    /// 방금 멤버십 만료일을 저장했다.
+    var savedMembership: Bool
     var connectionError: String?
     /// 사람이 고칠 수 있는 실패.
     var error: String?
+}
+
+/// 멤버십 칸에 그릴 것.
+struct MembershipRow: Encodable {
+    /// 날짜 칸에 채울 값. `2027-03-15` 꼴.
+    var expiresOn: String?
+    var daysLeft: Int?
+    /// 30일 안이거나 지났다. 인증서와 같은 기준으로 빨갛게 그린다.
+    var needsAttention: Bool
+    /// 만료일 당일이거나 지났다. 감시도 그날 0시를 만료로 본다 (`MembershipExpiry`).
+    /// "-3일 남음" 이라고 쓰지 않으려고 따로 둔다.
+    var isExpired: Bool
+
+    init(expiresOn: String?, now: Date = Date()) {
+        self.expiresOn = expiresOn
+        let days = MembershipExpiry.daysLeft(until: expiresOn, now: now)
+        self.daysLeft = days
+        self.needsAttention = days.map { $0 <= PortalGrouping.expiringSoonDays } ?? false
+        self.isExpired = days.map { $0 <= 0 } ?? false
+    }
 }
 
 struct WorkerListPageContext: Encodable {
