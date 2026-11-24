@@ -536,6 +536,33 @@ struct ProfileSigningFlowTests {
         }
     }
 
+    /// 최신 버전이 프로필을 쓰지 않으면 프로필 구역이 없다. 지난 실패 버전에서 발급하다
+    /// 막혔을 때 그 이유를 구역 안에만 두면 보이지 않는다.
+    @Test("프로필 구역이 없어도 발급이 막힌 이유를 보인다")
+    func showsIssueErrorWithoutSection() async throws {
+        try await withMigratedApp { app in
+            app.useFakeStorage()
+            let (owner, cookie) = try await app.makeUser(email: "dev@example.com", role: .developer)
+            let record = try await app.seedApp(bundleID: "com.example.tool", name: "도구", owner: owner)
+            let appID = try record.requireID()
+            let failed = try await app.seedVersion(
+                appID: appID, short: "1.0.0", build: 1, state: .uploaded, by: owner
+            )
+            try await failForProfile(failed, on: app)
+            try await app.seedVersion(appID: appID, short: "1.0.1", build: 2, state: .ready, by: owner)
+
+            // 시험 환경에는 연동이 없어 발급이 막힌다. 그 이유가 화면에 남아야 한다.
+            try await app.testing().test(
+                .POST, "/apps/\(appID)/versions/\(try failed.requireID())/issue-profile",
+                headers: .form(cookie: cookie)
+            ) { response in
+                let body = response.body.string
+                #expect(!body.contains("<section class=\"section\" id=\"provisioning-profile\">"))
+                #expect(body.contains("App Store Connect 연동이 설정되지 않았습니다"))
+            }
+        }
+    }
+
     @Test("발급하고 다시 시도는 앱을 관리하는 사람만 누른다")
     func issueAndRetryRequiresManageAccess() async throws {
         try await withMigratedApp { app in

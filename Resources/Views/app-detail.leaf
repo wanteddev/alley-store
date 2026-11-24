@@ -450,6 +450,15 @@
     </p>
     #endif
 </section>
+#else:
+<!-- 구역이 없어도 지난 실패 버전 옆에서 발급할 수 있다. 그 결과는 여기 띄운다.
+     구역 안에만 두면 Apple 이 거절한 이유가 보이지 않는다. -->
+#if(portalError):
+<p class="notice notice-error" id="provisioning-profile">#(portalError)</p>
+#endif
+#if(portalNotice):
+<p class="notice">#(portalNotice)</p>
+#endif
 #endif
 
 #if(canUpload):
