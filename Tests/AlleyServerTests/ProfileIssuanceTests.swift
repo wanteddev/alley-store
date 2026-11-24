@@ -675,6 +675,30 @@ struct ProfileSigningFlowTests {
         }
     }
 
+    /// 두 번 눌러 요청이 겹쳐도 같은 버전을 두 번 서명하지 않는다. 둘 다 failed 를 보고
+    /// 들어와도 failed 일 때만 바꾸는 갱신은 한쪽만 이긴다.
+    @Test("겹친 다시 시도는 한쪽만 큐에 넣는다")
+    func concurrentRetryEnqueuesOnce() async throws {
+        try await withMigratedApp { app in
+            let (owner, _) = try await app.makeUser(email: "dev@example.com", role: .developer)
+            let record = try await app.seedApp(bundleID: "com.example.tool", name: "도구", owner: owner)
+            let version = try await app.seedVersion(
+                appID: try record.requireID(), short: "1.0.0", build: 1, state: .failed, by: owner
+            )
+            let versionID = try version.requireID()
+
+            async let first: Bool = (try? await SigningJob.retry(versionID: versionID, on: app.db)) != nil
+            async let second: Bool = (try? await SigningJob.retry(versionID: versionID, on: app.db)) != nil
+            let results = await [first, second]
+
+            #expect(results.filter { $0 }.count == 1)
+            let jobs = try await SigningJob.query(on: app.db).filter(\.$version.$id == versionID).count()
+            #expect(jobs == 1)
+            let stored = try #require(try await Version.find(versionID, on: app.db))
+            #expect(stored.state == .uploaded)
+        }
+    }
+
     @Test("발급하고 다시 시도는 앱을 관리하는 사람만 누른다")
     func issueAndRetryRequiresManageAccess() async throws {
         try await withMigratedApp { app in

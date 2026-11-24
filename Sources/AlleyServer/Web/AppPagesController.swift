@@ -873,9 +873,9 @@ struct AppPagesController: RouteCollection, Sendable {
             return htmlResponse(view, status: .ok)
         }
 
-        try version.transition(to: .uploaded)
-        try await version.save(on: request.db)
-        try await SigningJob.enqueue(versionID: try version.requireID(), on: request.db)
+        // 발급하는 몇 초 사이에 같은 요청이 하나 더 왔을 수 있다. 처음의 확인을 믿지 않고
+        // failed 일 때만 바꾸는 갱신으로 한쪽만 큐에 넣는다.
+        try await SigningJob.retry(versionID: try version.requireID(), on: request.db)
         return request.redirect(to: Self.afterIssuePath(app))
     }
 

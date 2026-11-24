@@ -219,15 +219,14 @@ struct VersionPagesController: RouteCollection, Sendable {
             )
         }
 
-        if let attached = try Self.attachedEntitlements(from: request) {
-            version.entitlements = attached
-        }
-        try version.transition(to: .uploaded)
-        try await version.save(on: request.db)
-
         // 다시 시도하는 것도 워커를 거친다. 이미 서명·공증된 번들이면 워커가 그
-        // 단계를 건너뛴다 (ADR-0035).
-        try await SigningJob.enqueue(versionID: try version.requireID(), on: request.db)
+        // 단계를 건너뛴다 (ADR-0035). 위의 확인은 화면에 이유를 주려는 것이고, 겹친
+        // 요청을 막는 것은 `retry` 의 조건부 갱신이다.
+        try await SigningJob.retry(
+            versionID: try version.requireID(),
+            entitlements: try Self.attachedEntitlements(from: request),
+            on: request.db
+        )
         return request.redirect(to: "/apps/\(appID.uuidString)")
     }
 
