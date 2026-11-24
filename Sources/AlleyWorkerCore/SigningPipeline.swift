@@ -33,6 +33,18 @@ public struct SigningPipeline: Sendable {
         public var iconSize: Int64?
     }
 
+    /// 번들 ID 가 임시값인 앱이 프로필 때문에 멈췄다 (ADR-0085).
+    ///
+    /// 임시 번들 ID 는 서명이 끝나야 확정되고, 프로필은 확정된 번들 ID 가 있어야
+    /// 발급된다. 실패에 번들 ID 를 싣지 않으면 첫 서명은 프로필을, 프로필은 첫 서명을
+    /// 기다리며 둘 다 움직이지 않는다.
+    public struct ProfileBlocked: Error, CustomStringConvertible {
+        public let validation: Entitlements.ValidationError
+        public let bundleIdentifier: String
+
+        public var description: String { validation.description }
+    }
+
     public enum PipelineError: Error, CustomStringConvertible {
         /// 외부 명령이 실패했다.
         ///
@@ -104,10 +116,24 @@ public struct SigningPipeline: Sendable {
         await progress(.validating, inspection.reason)
 
         if !inspection.isAlreadyDone {
+            // 프로필은 서명 대상을 고르기 전에, 권한을 검사하기 전에 넣는다. 검사가
+            // 이 프로필을 기준으로 해야 하고, 서명이 이 파일까지 봉인해야 한다.
+            try await installProfile(from: job, into: bundle)
+
             let targets = try bundle.codeToSign()
             // 업로더가 준 plist 가 있으면 그것이 진실이다 (ADR-0020).
             let provided = job.entitlements.map { Data($0.utf8) }
-            let declaredKeys = try await validate(bundle: bundle, provided: provided)
+            let declaredKeys: [String]
+            do {
+                declaredKeys = try await validate(bundle: bundle, provided: provided)
+            } catch let validation as Entitlements.ValidationError
+                where validation.profileKeys != nil && job.appBundleIDPending == true {
+                // 번들 ID 가 임시값인 앱이 프로필 때문에 멈췄다. 읽어 둔 번들 ID 를 실어
+                // 보내 서버가 확정하게 한다. 그래야 프로필을 발급할 수 있다.
+                guard let identifier = bundle.bundleIdentifier else { throw validation }
+                throw ProfileBlocked(validation: validation, bundleIdentifier: identifier)
+            }
+            try await Self.validateHelpersWithOwnProfile(targets, of: bundle, provided: provided)
 
             var codesigningDetail = "서명 대상 \(targets.count)개"
             if declaredKeys.isEmpty {
@@ -117,7 +143,7 @@ public struct SigningPipeline: Sendable {
             }
             await progress(.codesigning, codesigningDetail)
             for target in targets {
-                try await sign(target, workspace: workspace, provided: provided)
+                try await sign(target, of: bundle, workspace: workspace, provided: provided)
             }
             try await verifySignature(of: bundle)
 
@@ -434,6 +460,40 @@ public struct SigningPipeline: Sendable {
         }
     }
 
+    /// 스토어가 준 프로필을 번들에 넣는다 (ADR-0085).
+    ///
+    /// **번들에 있던 것을 덮어쓴다.** 스토어 프로필은 이 워커가 쓰는 Developer ID
+    /// 인증서를 넣어 만든 것이고, 개발자가 넣어 온 것은 다른 인증서로 만들었을 수
+    /// 있다. 그러면 macOS 가 실행할 때 거절하는데 공증은 통과해서 알아채기 어렵다.
+    /// 덮어썼다는 사실은 잡 로그에 남긴다.
+    private func installProfile(from job: SigningJobDTO, into bundle: AppBundle) async throws {
+        guard let encoded = job.provisioningProfile else { return }
+        guard let data = Data(base64Encoded: encoded) else {
+            // 서버가 만든 값이 깨졌다. 번들을 고칠 일이 아니라 갈래를 따로 두지 않는다.
+            throw PipelineError.commandFailed(
+                step: "프로필 넣기",
+                code: .unknown,
+                detail: "서버가 보낸 프로비저닝 프로필을 base64 로 읽지 못했습니다."
+            )
+        }
+        let replaced: Bool
+        do {
+            replaced = try Entitlements.installProfile(data, into: bundle.url)
+        } catch {
+            throw PipelineError.commandFailed(
+                step: "프로필 넣기",
+                code: .bundleLayoutInvalid,
+                detail: "번들에 프로비저닝 프로필을 쓰지 못했습니다: \(error)"
+            )
+        }
+        await progress(
+            .validating,
+            replaced
+                ? "번들에 있던 프로비저닝 프로필을 스토어가 발급한 것으로 바꿨습니다."
+                : "스토어가 발급한 프로비저닝 프로필을 넣었습니다."
+        )
+    }
+
     /// 서명하기 전에 번들을 살펴본다. 실제로 붙게 될 권한 키를 돌려준다.
     ///
     /// 업로더가 plist 를 줬으면 그것이 기준이고, 안 줬으면 번들에 붙어 있는 것을 읽는다.
@@ -449,9 +509,56 @@ public struct SigningPipeline: Sendable {
         }
 
         let keys = Entitlements.keys(fromPropertyList: declared)
-        try Entitlements.validate(bundle: bundle.url, declaredKeys: keys)
+        try Entitlements.validate(bundle: bundle.url, propertyList: declared)
         try requireJITForElectron(bundle: bundle, declaredKeys: keys)
         return keys
+    }
+
+    /// 자기 프로필을 가진 헬퍼 `.app` 도 그 프로필로 대조한다.
+    ///
+    /// 바깥 앱의 대조는 바깥 프로필만 본다. 헬퍼는 서명할 때 신원만 자기 프로필로 맞추므로,
+    /// 헬퍼 프로필이 허용하지 않는 권한이 그대로 실리면 공증은 통과하고 실행할 때 죽는다.
+    ///
+    /// **프로필 갈래로 보내지 않는다.** 스토어가 발급하는 것은 바깥 앱의 프로필뿐이라,
+    /// 그 갈래의 "발급하고 다시 시도" 는 아무리 눌러도 풀리지 않는다. 고칠 것은 앱이다.
+    static func validateHelpersWithOwnProfile(
+        _ targets: [URL],
+        of bundle: AppBundle,
+        provided: Data?
+    ) async throws {
+        let outer = bundle.url.standardizedFileURL.path
+        for helper in targets
+        where helper.pathExtension == "app"
+            && helper.standardizedFileURL.path != outer
+            && Entitlements.hasProvisioningProfile(in: helper)
+        {
+            // 서명에 실릴 것과 같은 것을 본다(`entitlementsFile`).
+            let declared: Data
+            if let provided {
+                declared = provided
+            } else {
+                declared = await Entitlements.read(of: helper)
+            }
+            do {
+                try Entitlements.validate(bundle: helper, propertyList: declared)
+            } catch let validation as Entitlements.ValidationError {
+                let listed: String
+                if case .profileDoesNotAllow(_, _, let disallowed, let details) = validation {
+                    listed = (details.isEmpty ? disallowed : details).joined(separator: "; ")
+                } else {
+                    listed = validation.description
+                }
+                throw PipelineError.commandFailed(
+                    step: "번들 검사",
+                    code: .entitlementsRejected,
+                    detail: """
+                        헬퍼 \(helper.lastPathComponent) 에 든 프로필이 이 권한을 허용하지 \
+                        않습니다: \(listed). 헬퍼 프로필은 스토어가 발급하지 않으니 맞는 \
+                        프로필을 넣거나 권한을 빼고 다시 올려야 합니다.
+                        """
+                )
+            }
+        }
     }
 
     /// 번들 ID 가 받아들일 만한지 본다. 서명 전에 한다.
@@ -576,7 +683,9 @@ public struct SigningPipeline: Sendable {
     }
 
     /// 하나를 서명한다.
-    private func sign(_ target: URL, workspace: URL, provided: Data?) async throws {
+    private func sign(
+        _ target: URL, of bundle: AppBundle, workspace: URL, provided: Data?
+    ) async throws {
         var arguments = [
             "--force",
             "--sign", config.signingIdentity,
@@ -586,7 +695,9 @@ public struct SigningPipeline: Sendable {
             "--timestamp",
         ]
 
-        if let file = await entitlementsFile(for: target, provided: provided, workspace: workspace) {
+        if let file = await entitlementsFile(
+            for: target, of: bundle, provided: provided, workspace: workspace
+        ) {
             arguments += ["--entitlements", file.path]
         }
         arguments.append(target.path)
@@ -666,16 +777,46 @@ public struct SigningPipeline: Sendable {
     ///
     /// 준 것이 없으면 붙어 있던 권한을 꺼내 다시 넘긴다. 넘기지 않으면 재서명 과정에서
     /// 권한이 사라지고, 앱은 실행되지만 그 기능만 조용히 죽는다.
+    ///
+    /// **프로필을 쓰는 앱이면 두 가지를 더 손본다** (ADR-0085).
+    ///
+    /// - 바깥 `.app` 의 신원(`com.apple.application-identifier` 등)을 프로필 값으로
+    ///   맞춘다. 없거나 다르면 macOS 가 프로필이 이 앱 것인지 확인하지 못한다
+    /// - 안쪽 헬퍼 `.app` 에 업로더 plist 를 붙일 때, 헬퍼에 자기 프로필이 없으면
+    ///   프로필이 있어야 하는 권한을 뺀다. 그대로 두면 헬퍼가 뜨자마자 죽는다.
+    ///   자기 프로필이 있으면 신원을 그 프로필 값으로 맞춘다
     private func entitlementsFile(
         for target: URL,
+        of bundle: AppBundle,
         provided: Data?,
         workspace: URL
     ) async -> URL? {
-        let data: Data
+        var data: Data
         if let provided, target.pathExtension == "app" {
             data = provided
         } else {
             data = await Entitlements.read(of: target)
+        }
+
+        let isOuterBundle = target.standardizedFileURL.path == bundle.url.standardizedFileURL.path
+        let declared = Entitlements.keys(fromPropertyList: data)
+        if !Entitlements.restricted(in: declared).isEmpty {
+            if isOuterBundle {
+                // 대조를 통과했으므로 여기서는 읽힐 것이다. 못 읽으면 고칠 것 없이 둔다.
+                if let profile = try? Entitlements.embeddedProfile(in: bundle.url) {
+                    data = Entitlements.applyingProfileIdentity(to: data, from: profile)
+                }
+            } else if provided != nil, target.pathExtension == "app" {
+                if Entitlements.hasProvisioningProfile(in: target) {
+                    // 헬퍼가 자기 프로필을 가졌으면 신원은 그 프로필이 정한다. 업로더
+                    // plist 는 바깥 앱 기준이라 그대로 두면 헬퍼가 남의 신원으로 서명된다.
+                    if let profile = try? Entitlements.embeddedProfile(in: target) {
+                        data = Entitlements.applyingProfileIdentity(to: data, from: profile)
+                    }
+                } else {
+                    data = Entitlements.removingProfileRequired(from: data)
+                }
+            }
         }
 
         let file = workspace.appendingPathComponent("entitlements-\(UUID().uuidString).plist")

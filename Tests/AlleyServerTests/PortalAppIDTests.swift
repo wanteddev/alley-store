@@ -5,11 +5,11 @@ import VaporTesting
 
 @testable import AlleyServer
 
-/// 포털에 App ID 를 만들 자리를 어디에 둘지 (ADR-0005, ADR-0053).
+/// 포털에 App ID 와 프로필을 만들 자리를 어디에 둘지 (ADR-0005, ADR-0053, ADR-0085).
 ///
 /// 앱을 만드는 화면에는 둘 수 없다. 프로필이 필요한지는 entitlements 를 봐야 아는데
 /// 그것은 버전을 올릴 때 들어온다. 그래서 앱 상세에, 그 권한이 실제로 보인 뒤에 둔다.
-@Suite("앱의 포털 App ID")
+@Suite("앱의 프로비저닝 프로필 구역")
 struct PortalAppIDTests {
     /// 프로필이 필요한 권한. `com.apple.developer.` 로 시작한다.
     private let cloudKit = """
@@ -43,7 +43,7 @@ struct PortalAppIDTests {
         return (appID, token)
     }
 
-    @Test("프로필이 필요한 권한을 쓰면 App ID 자리가 나온다")
+    @Test("프로필이 필요한 권한을 쓰면 프로필 자리가 나온다")
     func showsForProfileEntitlements() async throws {
         try await withMigratedApp { app in
             let (appID, cookie) = try await seed(on: app, entitlements: cloudKit)
@@ -52,7 +52,7 @@ struct PortalAppIDTests {
                 .GET, "/apps/\(appID)", headers: .sessionCookie(cookie)
             ) { response in
                 let body = response.body.string
-                #expect(body.contains("Apple App ID"))
+                #expect(body.contains("id=\"provisioning-profile\""))
                 // 왜 필요한지 근거가 화면에 있어야 한다. 그냥 "등록하세요" 는 판단을 못 돕는다.
                 #expect(body.contains("com.apple.developer.icloud-services"))
             }
@@ -67,7 +67,7 @@ struct PortalAppIDTests {
             // 대부분의 맥 앱이 여기 해당한다. 포털에 등록할 것이 없다.
             try await app.testing().test(
                 .GET, "/apps/\(appID)", headers: .sessionCookie(cookie)
-            ) { #expect(!$0.body.string.contains("Apple App ID")) }
+            ) { #expect(!$0.body.string.contains("id=\"provisioning-profile\"")) }
         }
     }
 
@@ -78,7 +78,7 @@ struct PortalAppIDTests {
 
             try await app.testing().test(
                 .GET, "/apps/\(appID)", headers: .sessionCookie(cookie)
-            ) { #expect(!$0.body.string.contains("Apple App ID")) }
+            ) { #expect(!$0.body.string.contains("id=\"provisioning-profile\"")) }
         }
     }
 
@@ -93,32 +93,32 @@ struct PortalAppIDTests {
                 .GET, "/apps/\(appID)", headers: .sessionCookie(cookie)
             ) { response in
                 let body = response.body.string
-                #expect(body.contains("Apple App ID"))
-                #expect(!body.contains("App ID 만들기"))
-                #expect(body.contains("App Store Connect 연동이 설정되지 않아"))
+                #expect(body.contains("id=\"provisioning-profile\""))
+                #expect(!body.contains(">프로필 발급<"))
+                #expect(body.contains("App Store Connect 연동이 설정되지 않아 여기서 발급할 수 없습니다"))
             }
         }
     }
 
-    @Test("연동이 없으면 만들기 요청도 막힌다")
+    @Test("연동이 없으면 발급 요청도 막힌다")
     func rejectsRegistrationWithoutIntegration() async throws {
         try await withMigratedApp { app in
             let (appID, cookie) = try await seed(on: app, entitlements: cloudKit)
 
             try await app.testing().test(
-                .POST, "/apps/\(appID)/portal-app-id", headers: .form(cookie: cookie)
+                .POST, "/apps/\(appID)/provisioning-profile", headers: .form(cookie: cookie)
             ) { #expect($0.status == .serviceUnavailable) }
         }
     }
 
-    @Test("남의 앱에는 만들 수 없다")
+    @Test("남의 앱에는 발급할 수 없다")
     func requiresManageAccess() async throws {
         try await withMigratedApp { app in
             let (appID, _) = try await seed(on: app, entitlements: cloudKit)
             let (_, other) = try await app.makeUser(email: "other@example.com", role: .developer)
 
             try await app.testing().test(
-                .POST, "/apps/\(appID)/portal-app-id", headers: .form(cookie: other)
+                .POST, "/apps/\(appID)/provisioning-profile", headers: .form(cookie: other)
             ) { #expect($0.status == .forbidden) }
         }
     }

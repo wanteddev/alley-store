@@ -6,11 +6,13 @@ import Vapor
 /// App Store Connect API 접근.
 ///
 /// 하는 일은 셋이다. 인증서가 언제 만료되는지 보고, 특수 capability 를 쓰는 앱의
-/// App ID 를 등록하고, 필요하면 Developer ID 프로필을 받아온다 (ADR-0005).
+/// App ID 를 등록하고 capability 를 켜고, Developer ID 프로필을 만들어 받아온다
+/// (ADR-0005, ADR-0085).
 ///
 /// **이 서버가 아는 것은 조회와 등록까지다.** 서명은 워커가 자기 키체인의 인증서로
-/// 한다(ADR-0002). 여기서 받아오는 인증서 정보는 "언제 만료되는가"를 사람에게 알리는
-/// 용도이고, 개인키는 이 서버에 오지 않는다.
+/// 한다(ADR-0002). 여기서 받아오는 인증서 정보는 "언제 만료되는가"를 사람에게 알리고
+/// 프로필에 어느 인증서를 넣을지 고르는 용도이고, 개인키는 이 서버에 오지 않는다.
+/// 프로필은 비밀이 아니다. 인증서의 공개 부분과 허용 권한을 Apple 이 서명해 둔 것이다.
 public struct AppStoreConnectClient: Sendable {
     /// Apple 이 허용하는 토큰 수명의 상한은 20분이다. 여유를 두고 짧게 잡는다.
     static let tokenLifetime: TimeInterval = 10 * 60
@@ -20,6 +22,8 @@ public struct AppStoreConnectClient: Sendable {
         case notConfigured
         case invalidPrivateKey(String)
         case unauthorized
+        /// 키는 받아들였는데 이 일은 못 하게 한다. 대개 키의 역할이 모자란다.
+        case forbidden(detail: String)
         case api(status: Int, detail: String)
         case transport(String)
         case malformedResponse
@@ -35,6 +39,15 @@ public struct AppStoreConnectClient: Sendable {
                 return "ASC_PRIVATE_KEY 를 읽지 못했습니다: \(detail)"
             case .unauthorized:
                 return "App Store Connect 가 키를 거부했습니다. 발급자 ID 와 키 ID 를 확인하세요."
+            case .forbidden(let detail):
+                // 403 은 다른 이유로도 오지만(팀이 어긋난 키 등), 실제로 가장 흔한 것은
+                // 역할이다. 무엇을 확인하면 되는지 먼저 말하고 Apple 의 원문을 붙인다.
+                return """
+                    App Store Connect 가 이 키로는 할 수 없는 일이라고 했습니다. App ID 를 \
+                    만들고 capability 를 켜고 프로필을 만들려면 팀 키(Team Key)여야 하고 역할이 \
+                    Admin 이어야 합니다. 개인 키(Individual Key)는 이 기능을 못 씁니다. \
+                    Apple 의 말: \(detail)
+                    """
             case .api(let status, let detail):
                 return "App Store Connect 가 \(status) 를 돌려줬습니다: \(detail)"
             case .transport(let detail):
@@ -118,6 +131,108 @@ public struct AppStoreConnectClient: Sendable {
         )
     }
 
+    /// 식별자가 정확히 이것인 App ID. 없으면 nil.
+    ///
+    /// `bundleIDs()` 와 달리 플랫폼으로 거르지 않는다. Xcode 가 만든 App ID 는
+    /// `UNIVERSAL` 인 경우가 있는데, 맥 것만 보면 "없다" 고 판단하고 새로 만들려다
+    /// Apple 에게 이미 있다고 거절당한다.
+    public func bundleID(identifier: String) async throws -> ASCBundleID? {
+        let response: ASCResponse<ASCBundleIDAttributes> = try await get(
+            "/bundleIds",
+            query: ["limit": "200", "filter[identifier]": identifier]
+        )
+        // Apple 의 필터는 앞부분이 같은 것도 돌려준다. 같은 것만 남긴다.
+        return response.data
+            .first { $0.attributes.identifier == identifier }
+            .map { item in
+                ASCBundleID(
+                    id: item.id,
+                    identifier: identifier,
+                    name: item.attributes.name ?? identifier,
+                    platform: item.attributes.platform ?? "MAC_OS"
+                )
+            }
+    }
+
+    // MARK: - capability
+
+    /// 이 App ID 에 켜져 있는 capability 의 이름들 (`ICLOUD` 같은 Apple 쪽 값).
+    public func capabilities(ofBundleID resourceID: String) async throws -> Set<String> {
+        let response: ASCResponse<ASCCapabilityAttributes> = try await get(
+            "/bundleIds/\(resourceID)/bundleIdCapabilities",
+            query: ["limit": "200"]
+        )
+        return Set(response.data.compactMap(\.attributes.capabilityType))
+    }
+
+    /// App ID 에 capability 하나를 켠다.
+    ///
+    /// **켜면 그 App ID 로 만든 기존 프로필이 무효가 된다.** Apple 이 그렇게 한다. 그래서
+    /// 이것을 부른 뒤에는 반드시 프로필을 새로 만든다 (`ProfileIssuance`).
+    public func enableCapability(
+        _ capability: ProfileCapability,
+        onBundleID resourceID: String
+    ) async throws {
+        let body = ASCCapabilityCreateRequest(
+            data: .init(
+                attributes: .init(
+                    capabilityType: capability.rawValue,
+                    settings: capability.settings
+                ),
+                relationships: .init(bundleId: .init(data: .init(type: "bundleIds", id: resourceID)))
+            )
+        )
+        let _: ASCSingleResponse<ASCCapabilityAttributes> = try await post(
+            "/bundleIdCapabilities", body: body
+        )
+    }
+
+    // MARK: - 프로필
+
+    /// Developer ID 프로필을 만든다 (`MAC_APP_DIRECT`).
+    ///
+    /// 기기 목록은 넣지 않는다. Developer ID 프로필은 모든 기기를 허용한다.
+    public func createProfile(
+        name: String,
+        bundleIDResourceID: String,
+        certificateIDs: [String]
+    ) async throws -> ASCProfile {
+        let body = ASCProfileCreateRequest(
+            data: .init(
+                attributes: .init(name: name, profileType: "MAC_APP_DIRECT"),
+                relationships: .init(
+                    bundleId: .init(data: .init(type: "bundleIds", id: bundleIDResourceID)),
+                    certificates: .init(
+                        data: certificateIDs.map { .init(type: "certificates", id: $0) }
+                    )
+                )
+            )
+        )
+        let response: ASCSingleResponse<ASCProfileAttributes> = try await post(
+            "/profiles", body: body
+        )
+        guard let encoded = response.data.attributes.profileContent,
+              let content = Data(base64Encoded: encoded)
+        else {
+            throw ClientError.malformedResponse
+        }
+        return ASCProfile(
+            id: response.data.id,
+            name: response.data.attributes.name ?? name,
+            uuid: response.data.attributes.uuid,
+            content: content,
+            expiresAt: response.data.attributes.expirationDate
+        )
+    }
+
+    /// 프로필을 지운다. 프로필은 고칠 수 없어서 다시 만들 때는 지우고 새로 만든다.
+    public func deleteProfile(id: String) async throws {
+        guard let url = URL(string: Self.baseURL + "/profiles/\(id)") else {
+            throw ClientError.malformedResponse
+        }
+        _ = try await send(method: .DELETE, url: url, encodeBody: { _ in })
+    }
+
     // MARK: - 인증 토큰
 
     /// App Store Connect 가 요구하는 ES256 JWT.
@@ -199,6 +314,22 @@ public struct AppStoreConnectClient: Sendable {
         url: URL,
         encodeBody: (inout ClientRequest) throws -> Void
     ) async throws -> T {
+        let response = try await send(method: method, url: url, encodeBody: encodeBody)
+        do {
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try response.content.decode(T.self, using: decoder)
+        } catch {
+            throw ClientError.malformedResponse
+        }
+    }
+
+    /// 요청을 보내고 상태 코드까지 본다. 본문은 부르는 쪽이 읽는다.
+    private func send(
+        method: HTTPMethod,
+        url: URL,
+        encodeBody: (inout ClientRequest) throws -> Void
+    ) async throws -> ClientResponse {
         let token = try makeToken()
 
         let response: ClientResponse
@@ -214,20 +345,16 @@ public struct AppStoreConnectClient: Sendable {
         }
 
         guard response.status != .unauthorized else { throw ClientError.unauthorized }
+        guard response.status != .forbidden else {
+            throw ClientError.forbidden(detail: Self.errorDetail(from: response) ?? "이유 없음")
+        }
         guard response.status.code < 300 else {
             throw ClientError.api(
                 status: Int(response.status.code),
                 detail: Self.errorDetail(from: response) ?? "이유 없음"
             )
         }
-
-        do {
-            let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
-            return try response.content.decode(T.self, using: decoder)
-        } catch {
-            throw ClientError.malformedResponse
-        }
+        return response
     }
 
     /// Apple 이 주는 오류 본문에서 사람이 읽을 부분만 꺼낸다.
@@ -305,4 +432,71 @@ struct ASCBundleIDAttributes: Decodable {
     var identifier: String?
     var name: String?
     var platform: String?
+}
+
+struct ASCCapabilityAttributes: Decodable {
+    var capabilityType: String?
+}
+
+struct ASCProfileAttributes: Decodable {
+    var name: String?
+    var uuid: String?
+    var profileContent: String?
+    var expirationDate: Date?
+}
+
+/// 만들어진 프로필. 파일 바이트를 그대로 쥔다.
+public struct ASCProfile: Sendable, Equatable {
+    public var id: String
+    public var name: String
+    public var uuid: String?
+    public var content: Data
+    public var expiresAt: Date?
+}
+
+/// JSON:API 의 관계 한 칸. `{"type": "...", "id": "..."}`
+struct ASCLinkage: Encodable {
+    var type: String
+    var id: String
+}
+
+struct ASCToOne: Encodable {
+    var data: ASCLinkage
+}
+
+struct ASCToMany: Encodable {
+    var data: [ASCLinkage]
+}
+
+struct ASCCapabilityCreateRequest: Encodable {
+    struct Payload: Encodable {
+        struct Attributes: Encodable {
+            var capabilityType: String
+            var settings: [ProfileCapability.Setting]?
+        }
+        struct Relationships: Encodable {
+            var bundleId: ASCToOne
+        }
+        var type = "bundleIdCapabilities"
+        var attributes: Attributes
+        var relationships: Relationships
+    }
+    var data: Payload
+}
+
+struct ASCProfileCreateRequest: Encodable {
+    struct Payload: Encodable {
+        struct Attributes: Encodable {
+            var name: String
+            var profileType: String
+        }
+        struct Relationships: Encodable {
+            var bundleId: ASCToOne
+            var certificates: ASCToMany
+        }
+        var type = "profiles"
+        var attributes: Attributes
+        var relationships: Relationships
+    }
+    var data: Payload
 }

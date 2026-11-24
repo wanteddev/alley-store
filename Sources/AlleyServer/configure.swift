@@ -233,6 +233,9 @@ private func configureMigrations(_ app: Application) {
     // 인증서·멤버십 만료를 감시한다 (이슈 #89, ADR-0084).
     app.migrations.add(AddMembershipExpiresOnSetting())
     app.migrations.add(CreateExpiryWatch())
+    // 스토어가 프로비저닝 프로필을 발급해 보관한다 (이슈 #90, ADR-0085).
+    app.migrations.add(CreateIssuedProfile())
+    app.migrations.add(AddVersionProfileEntitlements())
 }
 
 /// 미들웨어 스택.

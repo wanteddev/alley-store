@@ -139,6 +139,8 @@ public struct WorkerLoop: Sendable {
             // 문자열을 다시 해석하게 두지 않는다 (ADR-0023).
             let code = SigningFailureCode.classify(error)
             log("잡 \(job.id) 실패 [\(code.rawValue)]: \(reason)")
+            let blocked = error as? SigningPipeline.ProfileBlocked
+            let validation = (error as? Entitlements.ValidationError) ?? blocked?.validation
             // 보고까지 실패하면 서버는 이 잡을 running 으로 알고 있게 된다.
             // 하트비트가 끊기면 서버가 그 잡을 큐로 되돌린다 (ADR-0018).
             try? await client.report(
@@ -146,7 +148,15 @@ public struct WorkerLoop: Sendable {
                     state: .failed,
                     log: reason,
                     failureReason: summarize(reason),
-                    failureCode: code
+                    failureCode: code,
+                    // 번들 ID 가 임시값이면 서버가 이것으로 확정한다. 그래야 프로필을
+                    // 발급할 수 있다.
+                    bundleMetadata: blocked.map {
+                        BundleMetadata(bundleIdentifier: $0.bundleIdentifier)
+                    },
+                    // 프로필 때문에 멈췄으면 어떤 권한이었는지 함께 보낸다. 서버는
+                    // 이것을 보고 그 앱에 프로필을 발급할 자리를 낸다 (ADR-0085).
+                    profileEntitlements: validation?.profileKeys
                 ),
                 for: job.id
             )

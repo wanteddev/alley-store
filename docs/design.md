@@ -78,10 +78,22 @@ Xcode의 자동 서명이 Developer ID 빌드에서도 App ID와 프로필을 �
 이것이 이 프로젝트가 제공하는 실질적인 편의입니다.
 
 다만 restricted entitlement를 쓰는 앱은 `Contents/embedded.provisionprofile`이
-**서명 이전에** 번들 안에 있어야 하므로, 개발자가 업로드하는 번들에 프로필이 이미
-포함돼 있어야 합니다. 워커는 업로드된 번들의 entitlements를 검사해서, restricted
-항목이 있는데 프로필이 없으면 서명 전에 명확한 에러로 실패시킵니다. 서명은 됐지만
-실행되지 않는 앱이 배포되는 상황을 막기 위해서입니다.
+**서명 이전에** 번들 안에 있어야 합니다. 그 프로필은 **스토어가 발급합니다**
+([ADR-0085](adr/0085-store-issues-provisioning-profiles.md)). 앱 소유자나 관리자가 앱
+상세에서 누르면 서버가 App Store Connect 로 App ID 를 확인하고, 필요한 capability 를 켜고,
+워커가 쓰는 Developer ID 인증서를 넣어 프로필을 만들어 보관합니다. 워커는 서명 잡
+지시서로 받은 프로필을 번들에 넣고 서명합니다. 개발자가 넣어 온 프로필이 있어도 스토어
+것으로 덮어씁니다. 개발자의 프로필에는 워커의 인증서가 없을 수 있어서입니다.
+
+워커는 서명 전에 entitlements 와 프로필이 허용하는 권한을 대조합니다. 키와, 문자열이면
+값까지 봅니다(iCloud 컨테이너를 연결하지 않은 프로필이 여기서 걸립니다). 프로필이 없거나
+그 권한을 허용하지 않으면 무엇이 모자란지 말하며 멈춥니다. 서명은 됐지만 실행되지 않는
+앱이 배포되는 상황을 막기 위해서입니다.
+
+restricted 로 보는 기준은 `com.apple.developer.` 로 시작하는 키와
+`keychain-access-groups`, `com.apple.application-identifier` 입니다. 샌드박스·하드닝
+권한과 App Group 은 프로필 없이 서명됩니다. Sign in with Apple 처럼 Developer ID 배포에서
+아예 못 쓰는 권한은 프로필로도 풀리지 않아서 따로 막습니다.
 
 ---
 
@@ -107,6 +119,11 @@ Xcode의 자동 서명이 Developer ID 빌드에서도 App ID와 프로필을 �
 | 프로필은 필요하나 특수 capability 없음                                              | **와일드카드 App ID 1개 공유** (`<prefix>.*`) | 포털에 엔트리 하나만 유지             |
 | Push / iCloud / App Groups / Sign in with Apple / Associated Domains 사용 | explicit App ID 개별 등록                 | 와일드카드로 커버 불가능              |
 
+
+스토어가 프로필을 발급할 때는 앱마다 explicit App ID 를 씁니다. 실제로 프로필이 필요한
+앱은 거의 다 capability 가 필요한데, 와일드카드에는 그것을 켤 수 없어서입니다
+([ADR-0085](adr/0085-store-issues-provisioning-profiles.md)). 가운데 칸의 와일드카드는
+사람이 직접 프로필을 만들 때를 위해 남아 있습니다.
 
 ### 스토어가 ID 대장 역할을 한다
 
@@ -366,16 +383,18 @@ stateDiagram-v2
 - 워커 등록: 관리자가 웹 콘솔에서 토큰 발급 → 워커 설정에 기입
 - 잡 처리 순서:
   1. 잡 클레임 → presigned URL로 미서명 아티팩트 다운로드
-  2. entitlements 검사 (restricted 항목이 있는데 프로필이 없으면 여기서 실패.
-   Electron 인데 JIT 권한이 없어도 여기서 실패)
-  3. `codesign --force --options runtime --sign "..."` (내부 프레임워크·헬퍼 포함
+  2. 지시서에 스토어가 발급한 프로필이 있으면 번들에 넣는다 (있던 것은 덮어쓴다)
+  3. entitlements 검사 (restricted 항목이 있는데 프로필이 없거나 그 권한을 허용하지
+   않으면 여기서 실패. Developer ID 로 못 쓰는 권한이거나 Electron 인데 JIT 권한이
+   없어도 여기서 실패)
+  4. `codesign --force --options runtime --sign "..."` (내부 프레임워크·헬퍼 포함
    inside-out 서명)
-  4. 번들 안의 Mach-O 를 훑어 재서명되지 않은 것이 남았는지 따로 센다.
+  5. 번들 안의 Mach-O 를 훑어 재서명되지 않은 것이 남았는지 따로 센다.
    `codesign --verify --deep --strict` 는 프레임워크 안의 dylib 이 링커가 붙인
    ad-hoc 서명 그대로 남아 있어도 통과시킨다
-  5. `xcrun notarytool submit --wait`
-  6. `xcrun stapler staple`
-  7. 결과물을 presigned URL로 업로드, 상태·로그 보고
+  6. `xcrun notarytool submit --wait`
+  7. `xcrun stapler staple`
+  8. 결과물을 presigned URL로 업로드, 상태·로그 보고
 
 #### 서명할 때 붙이는 entitlements
 
@@ -391,6 +410,14 @@ Hardened Runtime은 공증 요건이라 언제나 켭니다. 그런데 그 아�
 업로더가 준 plist는 `.app` 번들에만 붙입니다. 메인 앱과 그 안의 헬퍼 `.app`이 여기
 해당합니다. 프레임워크와 dylib, 홀로 놓인 헬퍼 실행 파일에는 붙이지 않습니다.
 `--entitlements`는 번들의 주 실행 파일에 쓰는 것입니다.
+
+프로필을 쓰는 앱이면 두 가지를 더 손봅니다
+([ADR-0085](adr/0085-store-issues-provisioning-profiles.md)). 바깥 `.app` 의
+`com.apple.application-identifier` 와 `com.apple.developer.team-identifier` 를 프로필
+값으로 맞춥니다. 없으면 채우고, 다른 팀의 값이 남아 있으면 덮어씁니다. macOS 는 이 값으로
+프로필이 이 앱 것인지 확인합니다. 헬퍼
+`.app` 에 업로더 plist 를 붙일 때는, 헬퍼에 자기 프로필이 없으면 프로필이 필요한 권한을
+뺍니다. 그대로 두면 헬퍼가 뜨자마자 죽습니다.
 
 Electron 앱은 `com.apple.security.cs.allow-jit` 없이 Hardened Runtime 아래에서 V8을
 띄우면 실행되자마자 죽습니다. **그 상태로도 공증은 통과합니다.** 그래서 번들에 Electron

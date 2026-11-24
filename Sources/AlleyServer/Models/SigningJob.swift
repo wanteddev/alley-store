@@ -134,6 +134,44 @@ extension SigningJob {
         try await job.save(on: database)
         return job
     }
+
+    /// 실패한 버전을 다시 서명 큐에 넣는다. 일반 재시도와 "프로필 발급하고 다시 시도" 가
+    /// 함께 쓴다.
+    ///
+    /// **확인과 바꾸기를 한 문장으로 한다.** 상태를 읽고 저장하는 사이에 같은 요청이 하나
+    /// 더 오면(더블클릭) 둘 다 failed 를 보고 각자 잡을 넣어 같은 버전이 두 번 서명된다.
+    /// failed 일 때만 바꾸는 갱신은 한쪽만 이기고, 진 쪽은 409 로 끝난다. 상태 변경과 잡
+    /// 생성은 한 트랜잭션이라 잡을 못 넣으면 상태도 failed 로 돌아간다.
+    ///
+    /// `entitlements` 를 주면 같은 갱신에서 바꾼다. nil 이면 원래 값을 둔다.
+    static func retry(
+        versionID: UUID,
+        entitlements: String? = nil,
+        on database: any Database
+    ) async throws {
+        try await database.transaction { tx in
+            guard let sql = tx as? any SQLDatabase else {
+                throw Abort(.internalServerError, reason: "SQL 데이터베이스가 아닙니다.")
+            }
+            // 상태 값은 `VersionState` 의 raw 값이다. 바깥에서 오는 값이 아니라 그대로 적는다.
+            let won = try await sql.raw(
+                """
+                UPDATE versions
+                SET state = 'uploaded', failure_reason = NULL, updated_at = now(),
+                    entitlements = COALESCE(\(bind: entitlements), entitlements)
+                WHERE id = \(bind: versionID) AND state = 'failed'
+                RETURNING id
+                """
+            ).all()
+            guard !won.isEmpty else {
+                throw Abort(
+                    .conflict,
+                    reason: "이미 다시 시도 중이거나 실패한 버전이 아닙니다. 화면을 새로 고쳐 보세요."
+                )
+            }
+            _ = try await enqueue(versionID: versionID, on: tx)
+        }
+    }
 }
 
 extension SigningJob {

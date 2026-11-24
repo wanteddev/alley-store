@@ -216,6 +216,12 @@ public struct WorkerController: RouteCollection, Sendable {
         let settings = try await request.storeSettings()
         let pending = job.version.app.bundleIDPending
 
+        // 스토어가 발급해 둔 프로필이 있으면 함께 보낸다 (ADR-0085). 워커가 번들에 넣고
+        // 서명한다. 없으면 워커는 번들에 든 것만 본다.
+        let profile = try await IssuedProfile.query(on: request.db)
+            .filter(\.$app.$id == appID)
+            .first()
+
         return SigningJobDTO(
             id: try job.requireID(),
             versionID: versionID,
@@ -230,6 +236,7 @@ public struct WorkerController: RouteCollection, Sendable {
             // 올린 사람이 준 것이 있으면 실어 보낸다. 미서명 업로드에는 워커가 읽어낼
             // 기존 서명이 없어서, 이것 없이는 권한 없이 서명된다 (ADR-0020).
             entitlements: job.version.entitlements,
+            provisioningProfile: profile?.content.base64EncodedString(),
             // 가장 먼저 만료되는 쪽이 이 잡의 유효 기간이다.
             expiresAt: [download.expiresAt, upload.expiresAt, diskImage?.expiresAt, icon.expiresAt]
                 .compactMap { $0 }.min() ?? download.expiresAt
@@ -256,7 +263,46 @@ public struct WorkerController: RouteCollection, Sendable {
         case .succeeded:
             try await finishSuccessfully(job, update: update, on: request)
         case .failed:
-            try await fail(job, reason: update.failureReason, code: update.failureCode, on: request)
+            // 프로필 때문에 멈췄으면 어떤 권한이었는지 버전에 둔다. 앱 상세가 이것을 보고
+            // 프로필을 발급할 자리를 낸다 (ADR-0085).
+            var reason = update.failureReason
+            // 이 블록의 쓰기가 무엇으로 실패해도 아래 실패 기록은 한다. 여기서 던지면 실패가
+            // 기록되지 않고, 워커는 보고를 다시 보내지 않으므로 잡이 하트비트가 끊길 때까지
+            // running 으로 남는다. 그동안 화면에는 실패도 발급 칸도 보이지 않는다.
+            if let keys = update.profileEntitlements, !keys.isEmpty {
+                do {
+                    job.version.profileEntitlements = EntitlementsPlist
+                        .requiringProvisioningProfile(in: keys)
+                    try await job.version.save(on: request.db)
+                } catch {
+                    request.logger.warning("프로필이 필요한 권한을 버전에 적지 못함: \(error)")
+                }
+
+                // 번들 ID 가 임시값이면 여기서 확정한다. 평소에는 서명이 끝나야 확정하지만,
+                // 프로필은 확정된 번들 ID 로만 발급된다. 여기서 두지 않으면 첫 서명은
+                // 프로필을, 프로필은 첫 서명을 기다린다. 워커는 이미 정책 검사를 마친
+                // 번들에서 읽었고, 이쪽도 같은 검사를 다시 한다.
+                let app = job.version.app
+                if let declared = update.bundleMetadata?.bundleIdentifier, app.bundleIDPending {
+                    do {
+                        try await AppRegistration.confirmBundleID(
+                            app,
+                            readFromBundle: declared,
+                            settings: try await request.storeSettings(),
+                            on: request.db,
+                            logger: request.logger
+                        )
+                    } catch {
+                        // 실패 사유에 붙인다. 중복이나 정책 위반이면 같은 파일로 다시 해도 풀리지
+                        // 않으니, 올린 사람이 무엇을 고칠지 화면에서 알아야 한다.
+                        let why = (error as? any AbortError)?.reason ?? "\(error)"
+                        request.logger.warning("프로필 실패에서 번들 ID 를 확정하지 못함 [\(declared)]: \(why)")
+                        let note = "번들 ID \(declared) 를 확정하지 못했습니다: \(why)"
+                        reason = reason.map { "\($0) \(note)" } ?? note
+                    }
+                }
+            }
+            try await fail(job, reason: reason, code: update.failureCode, on: request)
         case .queued:
             throw Abort(.badRequest, reason: "워커가 잡을 다시 큐로 되돌릴 수는 없습니다.")
         }

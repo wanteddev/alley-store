@@ -23,8 +23,15 @@ public enum SigningFailureCode: String, Codable, Sendable, CaseIterable, Equatab
     case signingKeyInaccessible = "signing_key_inaccessible"
     /// `codesign` 이 실패했는데 identity 문제는 아니다. 번들 자체에 문제가 있다.
     case codesignFailed = "codesign_failed"
-    /// entitlements 가 없거나(JIT 누락), 프로필이 필요한 권한인데 프로필이 없다.
+    /// entitlements 가 모자라거나(JIT 누락), Developer ID 로는 쓸 수 없는 권한이다.
     case entitlementsRejected = "entitlements_rejected"
+    /// 프로필이 필요한 권한을 쓰는데 프로필이 없거나, 있는 프로필이 그 권한을 허용하지
+    /// 않는다. 앱이 아니라 프로필을 고쳐야 한다 (ADR-0085).
+    ///
+    /// `entitlementsRejected` 에서 갈라 냈다. 그 갈래에는 "entitlements 를 붙여 다시
+    /// 시도" 하는 칸이 따라오는데(ADR-0036), 프로필이 모자란 사람에게 그 칸은 엉뚱한
+    /// 길이다. 이 갈래를 모르는 예전 서버는 `unknown` 으로 접고 재시도하지 않는다.
+    case provisioningProfileRequired = "provisioning_profile_required"
     /// zip 안에서 서명할 `.app` 을 정할 수 없다. 없거나 여러 개다.
     case bundleLayoutInvalid = "bundle_layout_invalid"
     /// 올린 번들이 밝히는 번들 ID 가 등록된 앱과 다르다. 서명하기 전에 멈춘다.
@@ -71,7 +78,8 @@ public enum SigningFailureCode: String, Codable, Sendable, CaseIterable, Equatab
         case .transferFailed, .appleServiceUnavailable, .timedOut:
             return true
         case .signingIdentityUnavailable, .signingKeyInaccessible, .codesignFailed,
-             .entitlementsRejected, .bundleLayoutInvalid, .bundleIdentifierMismatch, .unsignedCodeRemains,
+             .entitlementsRejected, .provisioningProfileRequired,
+             .bundleLayoutInvalid, .bundleIdentifierMismatch, .unsignedCodeRemains,
              .notarizationRejected, .unknown:
             return false
         }
@@ -108,6 +116,7 @@ public enum SigningFailureGuidance {
         case .signingKeyInaccessible: return "워커가 서명 키를 쓰지 못함"
         case .codesignFailed: return "서명 실패"
         case .entitlementsRejected: return "entitlements 문제"
+        case .provisioningProfileRequired: return "프로비저닝 프로필 필요"
         case .bundleLayoutInvalid: return "번들 구조 문제"
         case .bundleIdentifierMismatch: return "번들 ID 불일치"
         case .unsignedCodeRemains: return "서명되지 않은 코드가 남음"
@@ -136,6 +145,18 @@ public enum SigningFailureGuidance {
                 CODE_SIGN_ENTITLEMENTS 가 가리키는 파일(Electron 이면 보통 \
                 build/entitlements.mac.plist)을 찾아 같은 버전으로 다시 올리세요. \
                 MCP 로는 upload_version 의 entitlements 인자에 그 경로를 줍니다.
+                """
+        case .provisioningProfileRequired:
+            // 에이전트가 고칠 수 있는 일이 아니라는 것을 먼저 말한다. 그 말이 없으면
+            // entitlements 를 빼서 다시 올리는 쪽으로 간다. 그러면 기능이 조용히 죽는다.
+            return """
+                앱을 고칠 일이 아닙니다. 이 앱의 프로비저닝 프로필을 스토어가 발급해야 하고, \
+                그것은 앱 소유자나 관리자가 웹 콘솔의 앱 상세에서 합니다. MCP 로는 할 수 \
+                없습니다. 사람에게 발급을 부탁하고, 발급되면 같은 버전을 다시 시도하면 됩니다. \
+                다시 발급한 뒤에도 같은 실패가 나면 실패 사유에 앱이 선언한 값과 프로필이 \
+                허용하는 값이 나옵니다. 앱이 다른 팀의 값이나 잘못된 값을 적었으면 그때는 \
+                entitlements 를 고쳐 다시 빌드해야 하고, iCloud 컨테이너 연결 같은 Apple 쪽 \
+                설정이 원인이면 사람에게 알리세요.
                 """
         case .transferFailed, .appleServiceUnavailable, .timedOut:
             return """
@@ -177,6 +198,15 @@ public enum SigningFailureGuidance {
             //
             // 어디서 찾는지와 CLI 로 올리는 법은 붙이는 칸 옆에서 접어 보여준다.
             return "entitlements 파일을 붙여 다시 시도해야 합니다."
+        case .provisioningProfileRequired:
+            // 세 화면이 함께 쓰는 자리라 버튼을 가리키지 않는다. 버튼은 앱 상세에서
+            // 그 실패 바로 옆에 따로 선다.
+            return """
+                앱을 다시 빌드할 일이 아닙니다. 앱 소유자나 관리자가 앱 상세에서 프로필을 \
+                발급하면 같은 파일로 다시 시도할 수 있습니다. 프로필을 다시 발급해도 같은 \
+                실패가 나면 앱이 선언한 값이 프로필과 맞지 않는 것입니다. 실패 사유에 적힌 \
+                값을 보고 Apple 개발자 사이트의 설정이나 앱의 entitlements 를 고치세요.
+                """
         case .bundleLayoutInvalid:
             return """
                 zip 최상위에 .app 하나만 담아 다시 올리세요. 앱이 없거나 여러 개면 무엇을 \
