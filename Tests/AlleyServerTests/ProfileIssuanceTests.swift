@@ -532,6 +532,8 @@ struct ProfileSigningFlowTests {
                 let body = response.body.string
                 #expect(body.contains(action))
                 #expect(body.contains("type=\"submit\">프로필 발급하고 다시 시도"))
+                // 앱 구역(최신 버전)이 아니라 이 버전이 켜는 것을 말한다.
+                #expect(body.contains("이 버전에 맞춰 켜는 capability: iCloud."))
             }
         }
     }
@@ -560,6 +562,116 @@ struct ProfileSigningFlowTests {
                 #expect(!body.contains("<section class=\"section\" id=\"provisioning-profile\">"))
                 #expect(body.contains("App Store Connect 연동이 설정되지 않았습니다"))
             }
+        }
+    }
+
+    /// 공증 거절처럼 프로필과 상관없이 멈춘 버전에서 Apple 계정을 바꾸고 저장된 프로필을
+    /// 갈아 끼우면 안 된다. 화면이 버튼을 내는 조건과 같아야 한다.
+    @Test("프로필 때문에 멈춘 버전에서만 발급하고 다시 시도한다")
+    func issueAndRetryRequiresProfileFailure() async throws {
+        try await withMigratedApp { app in
+            let (owner, cookie) = try await app.makeUser(email: "dev@example.com", role: .developer)
+            let record = try await app.seedApp(bundleID: "com.example.tool", name: "도구", owner: owner)
+            let appID = try record.requireID()
+            let version = try await app.seedVersion(
+                appID: appID, short: "1.0.0", build: 1, state: .failed, by: owner
+            )
+            app.alleyConfig.appStoreConnect = .init(
+                issuerID: "issuer", keyID: "KEY123",
+                privateKeyPEM: P256.Signing.PrivateKey().pemRepresentation
+            )
+            let fake = FakeAppleAPI()
+            app.clients.use { _ in fake }
+
+            try await app.testing().test(
+                .POST, "/apps/\(appID)/versions/\(try version.requireID())/issue-profile",
+                headers: .form(cookie: cookie)
+            ) { #expect($0.status == .conflict) }
+            #expect(fake.requests.isEmpty)
+        }
+    }
+
+    /// 저장된 프로필은 허용하는 키만 알아서, 컨테이너를 연결하지 않은 것은 돌려보낸 뒤에
+    /// 다시 계산할 수 없다. 남은 일이 있으면 그 자리에서 말해야 한다.
+    @Test("앱 구역에서 발급한 뒤 남은 일이 있으면 돌려보내지 않고 그 자리에 말한다")
+    func appLevelIssueShowsRemainingWork() async throws {
+        try await withMigratedApp { app in
+            let (owner, cookie) = try await app.makeUser(email: "dev@example.com", role: .developer)
+            let record = try await app.seedApp(bundleID: "com.example.tool", name: "도구", owner: owner)
+            let appID = try record.requireID()
+            let version = try await app.seedVersion(
+                appID: appID, short: "1.0.0", build: 1, state: .ready, by: owner
+            )
+            version.profileEntitlements = ["com.apple.developer.icloud-container-identifiers"]
+            try await version.save(on: app.db)
+            app.alleyConfig.appStoreConnect = .init(
+                issuerID: "issuer", keyID: "KEY123",
+                privateKeyPEM: P256.Signing.PrivateKey().pemRepresentation
+            )
+            let fake = FakeAppleAPI(existingBundleID: true, emptyContainers: true)
+            app.clients.use { _ in fake }
+
+            try await app.testing().test(
+                .POST, "/apps/\(appID)/provisioning-profile", headers: .form(cookie: cookie)
+            ) { response in
+                #expect(response.status == .ok)
+                #expect(response.body.string.contains(ProfileIssuance.Outcome.issuedNotice))
+            }
+        }
+    }
+
+    @Test("발급해 둔 프로필만 남았으면 구역 첫 문장이 그것을 말한다")
+    func sectionLeadForStoredProfileOnly() async throws {
+        try await withMigratedApp { app in
+            let (owner, cookie) = try await app.makeUser(email: "dev@example.com", role: .developer)
+            let record = try await app.seedApp(bundleID: "com.example.tool", name: "도구", owner: owner)
+            let appID = try record.requireID()
+            try await app.seedVersion(appID: appID, short: "1.0.0", build: 1, state: .ready, by: owner)
+            let profile = IssuedProfile()
+            profile.$app.id = appID
+            profile.ascProfileID = "profile-1"
+            profile.name = "Alley com.example.tool"
+            profile.content = FakeProfile.make(allowing: ["com.apple.developer.icloud-services"])
+            profile.entitlementKeys = ["com.apple.developer.icloud-services"]
+            profile.certificateIDs = ["cert-devid"]
+            try await profile.save(on: app.db)
+
+            try await app.testing().test(
+                .GET, "/apps/\(appID)", headers: .sessionCookie(cookie)
+            ) { response in
+                let body = response.body.string
+                #expect(body.contains("이 앱에 발급해 둔 프로비저닝 프로필입니다"))
+                #expect(!body.contains("이 앱은 프로비저닝 프로필이 있어야 쓸 수 있는 권한을 씁니다"))
+            }
+        }
+    }
+
+    @Test("임시 번들 ID 를 확정하지 못하면 그 이유를 실패 사유에 남긴다")
+    func pendingBundleIDRejectionIsShown() async throws {
+        try await withMigratedApp { app in
+            app.useFakeStorage()
+            let (owner, _) = try await app.makeUser(email: "dev@example.com", role: .developer)
+            // 같은 번들 ID 를 이미 쓰는 앱이 있다.
+            try await app.seedApp(bundleID: "com.example.taken", name: "먼저 온 앱", owner: owner)
+            let record = try await app.seedApp(
+                bundleID: AppRegistration.provisionalBundleID(), name: "도구", owner: owner
+            )
+            record.bundleIDPending = true
+            try await record.save(on: app.db)
+            let version = try await app.seedVersion(
+                appID: try record.requireID(), short: "1.0.0", build: 1, state: .uploaded, by: owner
+            )
+
+            try await failForProfile(
+                version, on: app,
+                bundleMetadata: BundleMetadata(bundleIdentifier: "com.example.taken")
+            )
+
+            let stored = try #require(try await Version.find(try version.requireID(), on: app.db))
+            #expect(stored.state == .failed)
+            #expect(stored.failureReason?.contains("번들 ID com.example.taken 를 확정하지 못했습니다") == true)
+            let storedApp = try #require(try await App.find(try record.requireID(), on: app.db))
+            #expect(storedApp.bundleIDPending)
         }
     }
 

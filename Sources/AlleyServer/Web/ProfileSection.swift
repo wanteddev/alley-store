@@ -24,6 +24,8 @@ struct ProfileSection: Encodable {
     var canIssue: Bool
     /// 누를 수 없다면 왜. 연동이 없는 경우는 화면이 따로 말한다.
     var blockedReason: String?
+    /// 지금 올린 버전이 프로필을 요구하는가. 아니면 발급해 둔 것 때문에 구역이 보인다.
+    var isNeededNow: Bool
 
     /// 그릴 것이 없으면 nil.
     static func make(
@@ -52,7 +54,8 @@ struct ProfileSection: Encodable {
                 IssuedProfileRow(profile: $0, requiredKeys: plan.keys, bundleID: app.bundleID)
             },
             canIssue: isPortalConfigured && blockedReason == nil,
-            blockedReason: blockedReason
+            blockedReason: blockedReason,
+            isNeededNow: !plan.keys.isEmpty
         )
     }
 

@@ -590,6 +590,10 @@ struct AppPagesController: RouteCollection, Sendable {
                             version: version,
                             isPortalConfigured: request.application.alleyConfig.appStoreConnect != nil
                         )
+                        let plan = ProfilePlan(keys: ProfileIssuance.requiredKeys(of: version))
+                        row.profileCapabilities = plan.capabilities.isEmpty
+                            ? nil
+                            : plan.capabilities.map(\.displayName).joined(separator: ", ")
                     }
                     return row
                 },
@@ -788,8 +792,9 @@ struct AppPagesController: RouteCollection, Sendable {
         let versions = try await Version.query(on: request.db)
             .filter(\.$app.$id == app.requireID())
             .all()
+        let outcome: ProfileIssuance.Outcome
         do {
-            _ = try await issueProfile(
+            outcome = try await issueProfile(
                 for: app, keys: ProfileIssuance.requiredKeys(of: versions), by: user, on: request
             )
         } catch let abort as any AbortError where Self.showsInPlace(abort) {
@@ -797,6 +802,14 @@ struct AppPagesController: RouteCollection, Sendable {
                 on: request, issuedToken: nil, portalError: abort.reason
             )
             return htmlResponse(view, status: abort.status)
+        }
+        // Apple 화면에서 할 일이 남았으면 그 자리에 그린다. 돌려보내면 그 말이 사라진다.
+        // 저장된 프로필은 키만 알아서, 컨테이너를 연결하지 않은 것은 다시 계산할 수 없다.
+        guard !outcome.needsPortalWork else {
+            let view = try await renderDetail(
+                on: request, issuedToken: nil, portalNotice: outcome.notice
+            )
+            return htmlResponse(view, status: .ok)
         }
         // 돌려보낸다. 결과 화면을 그대로 주면 새로고침이 발급을 한 번 더 한다. 그때마다
         // Apple 에 새 프로필이 생기고 옛 것이 지워진다.
@@ -826,6 +839,15 @@ struct AppPagesController: RouteCollection, Sendable {
             throw Abort(
                 .conflict,
                 reason: "실패한 버전만 다시 시도할 수 있습니다. 현재 상태: \(version.state.rawValue)"
+            )
+        }
+        // 화면이 버튼을 내는 것과 같은 조건이다. 다른 이유로 실패한 버전에서 Apple 계정을
+        // 바꾸고 저장된 프로필을 갈아 끼우면 안 된다. 그런 버전은 일반 재시도를 쓴다.
+        let current = try await SigningJob.attempts(ofVersion: try version.requireID(), on: request.db).last
+        guard current?.failureCode == .provisioningProfileRequired else {
+            throw Abort(
+                .conflict,
+                reason: "프로비저닝 프로필 때문에 멈춘 버전에서만 발급하고 다시 시도할 수 있습니다."
             )
         }
 
@@ -859,8 +881,8 @@ struct AppPagesController: RouteCollection, Sendable {
 
     /// 다시 시도를 미뤘을 때 덧붙이는 말.
     static let retryHeldBack = """
-        이 버전은 아직 다시 시도하지 않았습니다. 위의 일을 마치고 '프로필 다시 발급' 을 \
-        누른 뒤 다시 시도하세요.
+        이 버전은 아직 다시 시도하지 않았습니다. 위의 일을 마치고 이 버전의 '프로필 발급하고 \
+        다시 시도' 를 다시 누르세요.
         """
 
     static func afterIssuePath(_ app: App) -> String {
@@ -1486,6 +1508,9 @@ struct VersionRow: Encodable {
     /// 그 버튼을 누를 수 없다면 왜. 버튼은 비활성으로 두고 이 문장을 함께 보인다.
     /// 앱 소유자와 관리자에게만 채운다.
     var profileBlockedReason: String? = nil
+    /// 그 버튼이 켜는 capability 의 이름. 앱 구역은 최신 버전 기준이라 지난 버전과 다를
+    /// 수 있어, 버튼 옆에 그 버전 것을 따로 적는다. 켤 것이 없으면 nil.
+    var profileCapabilities: String? = nil
     /// 지난 시도들. 최근 것이 위로 온다. 현재 시도는 위 칸이 그리고, 지난 시도는
     /// 접어서 "N번째 시도" 로 골라 본다 (이슈 #85). 재시도가 없었으면 비어 있다.
     var pastAttempts: [SigningAttemptView]

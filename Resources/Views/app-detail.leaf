@@ -310,7 +310,7 @@
                     #else:
                     <p class="field-note">
                         누르면 Apple 개발자 계정에 이 앱의 App ID 와 프로필이 만들어집니다.
-                        #if(profile):무엇을 켜는지는 아래 '프로비저닝 프로필' 에 있습니다.#endif
+                        #if(version.profileCapabilities):이 버전에 맞춰 켜는 capability: #(version.profileCapabilities).#endif
                     </p>
                     #endif
                     #endif#endif
@@ -385,8 +385,13 @@
 <section class="section" id="provisioning-profile">
     <h2 class="section-title">프로비저닝 프로필</h2>
     <p class="section-lead">
+        #if(profile.isNeededNow):
         이 앱은 프로비저닝 프로필이 있어야 쓸 수 있는 권한을 씁니다. 스토어가 프로필을
         발급해 두면 워커가 서명할 때 번들에 넣습니다.
+        #else:
+        이 앱에 발급해 둔 프로비저닝 프로필입니다. 지금 올린 버전에는 필요하지 않지만,
+        워커는 서명할 때 이것을 번들에 넣습니다.
+        #endif
     </p>
 
     #if(portalError):

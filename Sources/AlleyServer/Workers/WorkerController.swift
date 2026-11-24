@@ -265,10 +265,18 @@ public struct WorkerController: RouteCollection, Sendable {
         case .failed:
             // 프로필 때문에 멈췄으면 어떤 권한이었는지 버전에 둔다. 앱 상세가 이것을 보고
             // 프로필을 발급할 자리를 낸다 (ADR-0085).
+            var reason = update.failureReason
+            // 이 블록의 쓰기가 무엇으로 실패해도 아래 실패 기록은 한다. 여기서 던지면 실패가
+            // 기록되지 않고, 워커는 보고를 다시 보내지 않으므로 잡이 하트비트가 끊길 때까지
+            // running 으로 남는다. 그동안 화면에는 실패도 발급 칸도 보이지 않는다.
             if let keys = update.profileEntitlements, !keys.isEmpty {
-                job.version.profileEntitlements = EntitlementsPlist
-                    .requiringProvisioningProfile(in: keys)
-                try await job.version.save(on: request.db)
+                do {
+                    job.version.profileEntitlements = EntitlementsPlist
+                        .requiringProvisioningProfile(in: keys)
+                    try await job.version.save(on: request.db)
+                } catch {
+                    request.logger.warning("프로필이 필요한 권한을 버전에 적지 못함: \(error)")
+                }
 
                 // 번들 ID 가 임시값이면 여기서 확정한다. 평소에는 서명이 끝나야 확정하지만,
                 // 프로필은 확정된 번들 ID 로만 발급된다. 여기서 두지 않으면 첫 서명은
@@ -284,16 +292,17 @@ public struct WorkerController: RouteCollection, Sendable {
                             on: request.db,
                             logger: request.logger
                         )
-                    } catch let abort as any AbortError {
-                        // 실패 기록은 그대로 남긴다. 번들 ID 가 정책에 맞지 않으면 프로필을
-                        // 발급해도 소용없고, 그 사실은 발급 칸이 따로 말한다.
-                        request.logger.warning(
-                            "프로필 실패에서 번들 ID 를 확정하지 못함 [\(declared)]: \(abort.reason)"
-                        )
+                    } catch {
+                        // 실패 사유에 붙인다. 중복이나 정책 위반이면 같은 파일로 다시 해도 풀리지
+                        // 않으니, 올린 사람이 무엇을 고칠지 화면에서 알아야 한다.
+                        let why = (error as? any AbortError)?.reason ?? "\(error)"
+                        request.logger.warning("프로필 실패에서 번들 ID 를 확정하지 못함 [\(declared)]: \(why)")
+                        let note = "번들 ID \(declared) 를 확정하지 못했습니다: \(why)"
+                        reason = reason.map { "\($0) \(note)" } ?? note
                     }
                 }
             }
-            try await fail(job, reason: update.failureReason, code: update.failureCode, on: request)
+            try await fail(job, reason: reason, code: update.failureCode, on: request)
         case .queued:
             throw Abort(.badRequest, reason: "워커가 잡을 다시 큐로 되돌릴 수는 없습니다.")
         }
