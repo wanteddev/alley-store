@@ -172,7 +172,7 @@ enum ExpiryKind: Sendable, Equatable {
             return NotificationMessage(
                 title: "Apple Developer Program 멤버십 만료일이 비어 있습니다",
                 body: """
-                    만료되면 인증서가 무효가 되고 공증도 거절되는데, 날짜를 몰라 미리 알릴 수 \
+                    만료되면 새 인증서를 받을 수 없고 공증도 막힐 수 있는데, 날짜를 몰라 미리 알릴 수 \
                     없습니다. 앱 서명 화면에 만료일을 적어 주세요. 적을 때까지 일주일마다 다시 알립니다.
                     """,
                 link: link
@@ -182,7 +182,7 @@ enum ExpiryKind: Sendable, Equatable {
                 title: "Apple Developer Program 멤버십 만료일이 지났습니다",
                 body: """
                     적어둔 만료일: \(date ?? "-")
-                    갱신하지 않았다면 지금 서명과 공증이 막혀 있습니다. 갱신했다면 앱 서명 화면에서 \
+                    갱신하지 않았다면 새 인증서 발급과 공증이 막혀 있을 수 있습니다. 갱신했다면 앱 서명 화면에서 \
                     만료일을 새 날짜로 고치세요. 고칠 때까지 일주일마다 다시 알립니다.
                     """,
                 link: link
@@ -192,7 +192,7 @@ enum ExpiryKind: Sendable, Equatable {
                 title: "Apple Developer Program 멤버십이 \(days)일 뒤 만료됩니다",
                 body: """
                     적어둔 만료일: \(date ?? "-")
-                    만료되면 인증서가 무효가 되고 공증도 거절됩니다. 갱신했다면 앱 서명 화면에서 \
+                    만료되면 새 인증서를 받을 수 없고 공증도 막힐 수 있습니다. 갱신했다면 앱 서명 화면에서 \
                     만료일을 새 날짜로 고치세요.
                     """,
                 link: link

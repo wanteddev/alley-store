@@ -184,7 +184,7 @@
 | 무엇 | 수명 | 만료되면 | 지금 |
 | --- | --- | --- | --- |
 | Developer ID Application 인증서 | 5년 | 워커가 서명 못 함 | 화면에만 |
-| Apple Developer Program 멤버십 | 1년 | 인증서가 무효가 되고 공증도 거절됨 | 아무 데도 없음 |
+| Apple Developer Program 멤버십 | 1년 | 새 인증서를 받을 수 없고 공증도 막힐 수 있음 | 아무 데도 없음 |
 | 공증 자격증명 (notary profile) | 앱 암호면 폐기 가능 | 공증 제출 실패 | 아무 데도 없음 |
 | App Store Connect API 키 | 없음 (폐기는 가능) | App ID 등록·조회 실패 | 아무 데도 없음 |
 | 프로비저닝 프로필 | 1년 | 그 앱만 서명 실패 | 아직 발급 자체를 안 함 |
