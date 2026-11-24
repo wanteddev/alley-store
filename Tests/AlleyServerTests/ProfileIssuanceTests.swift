@@ -269,6 +269,31 @@ struct ProfileIssuanceTests {
         }
     }
 
+    /// capability 를 켜는 순간 Apple 은 있던 프로필을 무효로 만든다. 그 뒤에 인증서가
+    /// 없어 멈추면 새 프로필 없이 옛 프로필만 잃는다.
+    @Test("살아 있는 인증서가 없으면 Apple 계정을 바꾸기 전에 멈춘다")
+    func checksCertificatesBeforeChangingAccount() async throws {
+        try await withMigratedApp { app in
+            let (record, owner) = try await seed(on: app)
+            let fake = FakeAppleAPI(noLiveCertificates: true)
+
+            await #expect(throws: (any Error).self) {
+                _ = try await ProfileIssuance.issue(
+                    for: record,
+                    keys: ["com.apple.developer.icloud-services"],
+                    using: client(fake),
+                    by: owner,
+                    on: app.db,
+                    logger: app.logger
+                )
+            }
+            #expect(fake.requested(.GET, "/v1/certificates"))
+            #expect(!fake.requested(.POST, "/v1/bundleIds"))
+            #expect(!fake.requested(.POST, "/v1/bundleIdCapabilities"))
+            #expect(!fake.requested(.POST, "/v1/profiles"))
+        }
+    }
+
     @Test("키 역할이 모자라면 무엇을 확인할지 말한다")
     func explainsForbidden() async throws {
         try await withMigratedApp { app in
@@ -411,6 +436,106 @@ struct ProfileSigningFlowTests {
         }
     }
 
+    /// 워커가 잡을 가져가 프로필 때문에 실패했다고 보고한 상태를 만든다.
+    private func failForProfile(
+        _ version: Version,
+        on app: Application,
+        bundleMetadata: BundleMetadata? = nil
+    ) async throws {
+        try await SigningJob.enqueue(versionID: try version.requireID(), on: app.db)
+        let (_, token) = try await app.makeWorker()
+        var claimed: SigningJobDTO?
+        try await app.testing().test(.GET, nextJobPath, headers: .bearer(token)) {
+            claimed = try $0.content.decode(SigningJobDTO.self)
+        }
+        let ticket = try #require(claimed)
+        try await app.testing().test(
+            .PATCH, APIPath.job(ticket.id),
+            headers: .bearer(token),
+            beforeRequest: {
+                try $0.content.encode(
+                    SigningJobUpdate(
+                        state: .failed,
+                        failureReason: "프로필이 없습니다.",
+                        failureCode: .provisioningProfileRequired,
+                        bundleMetadata: bundleMetadata,
+                        profileEntitlements: ["com.apple.developer.icloud-services"]
+                    )
+                )
+            }
+        ) { #expect($0.status == .noContent) }
+    }
+
+    /// 임시 번들 ID 는 서명이 끝나야 확정되는데 프로필은 확정된 번들 ID 로만 발급된다.
+    /// 프로필 실패에서 확정하지 않으면 둘이 서로를 기다린다.
+    @Test("번들 ID 가 임시값인 앱은 프로필 실패에서 번들 ID 를 확정한다")
+    func profileFailureConfirmsPendingBundleID() async throws {
+        try await withMigratedApp { app in
+            app.useFakeStorage()
+            let (owner, _) = try await app.makeUser(email: "dev@example.com", role: .developer)
+            let record = try await app.seedApp(
+                bundleID: AppRegistration.provisionalBundleID(), name: "도구", owner: owner
+            )
+            record.bundleIDPending = true
+            try await record.save(on: app.db)
+            let version = try await app.seedVersion(
+                appID: try record.requireID(), short: "1.0.0", build: 1, state: .uploaded, by: owner
+            )
+
+            try await failForProfile(
+                version, on: app,
+                bundleMetadata: BundleMetadata(bundleIdentifier: "com.example.fromdmg")
+            )
+
+            let stored = try #require(try await App.find(try record.requireID(), on: app.db))
+            #expect(stored.bundleID == "com.example.fromdmg")
+            #expect(stored.bundleIDPending == false)
+            let storedVersion = try #require(try await Version.find(try version.requireID(), on: app.db))
+            #expect(storedVersion.state == .failed)
+        }
+    }
+
+    /// 앱 구역은 최신 버전의 권한을 본다. 버전 옆 버튼까지 그것을 따르면 최신 버전이
+    /// 프로필을 쓰지 않을 때 지난 실패 버전은 발급할 길이 없어진다.
+    @Test("지난 실패 버전의 발급 버튼은 그 버전의 권한으로 판단한다")
+    func retryButtonFollowsItsOwnVersion() async throws {
+        try await withMigratedApp { app in
+            app.useFakeStorage()
+            let (owner, cookie) = try await app.makeUser(email: "dev@example.com", role: .developer)
+            let record = try await app.seedApp(bundleID: "com.example.tool", name: "도구", owner: owner)
+            let appID = try record.requireID()
+            let failed = try await app.seedVersion(
+                appID: appID, short: "1.0.0", build: 1, state: .uploaded, by: owner
+            )
+            try await failForProfile(failed, on: app)
+            // 그 뒤에 프로필이 필요 없는 버전이 올라왔다.
+            try await app.seedVersion(appID: appID, short: "1.0.1", build: 2, state: .ready, by: owner)
+            let action = "/apps/\(appID)/versions/\(try failed.requireID())/issue-profile"
+
+            // 연동이 없으면 숨기지 않고 누를 수 없게 둔 뒤 이유를 적는다.
+            try await app.testing().test(
+                .GET, "/apps/\(appID)", headers: .sessionCookie(cookie)
+            ) { response in
+                let body = response.body.string
+                #expect(body.contains(action))
+                #expect(body.contains("disabled>프로필 발급하고 다시 시도"))
+                #expect(body.contains("App Store Connect 연동이 설정되지 않아 여기서 발급할 수 없습니다"))
+            }
+
+            app.alleyConfig.appStoreConnect = .init(
+                issuerID: "issuer", keyID: "KEY123",
+                privateKeyPEM: P256.Signing.PrivateKey().pemRepresentation
+            )
+            try await app.testing().test(
+                .GET, "/apps/\(appID)", headers: .sessionCookie(cookie)
+            ) { response in
+                let body = response.body.string
+                #expect(body.contains(action))
+                #expect(body.contains("type=\"submit\">프로필 발급하고 다시 시도"))
+            }
+        }
+    }
+
     @Test("발급하고 다시 시도는 앱을 관리하는 사람만 누른다")
     func issueAndRetryRequiresManageAccess() async throws {
         try await withMigratedApp { app in
@@ -451,14 +576,17 @@ final class FakeAppleAPI: Client, @unchecked Sendable {
     private let profileAllows: [String]?
     private let forbidsWrites: Bool
     private let emptyContainers: Bool
+    private let noLiveCertificates: Bool
 
     init(
         existingBundleID: Bool = false,
         enabledCapabilities: [String] = [],
         profileAllows: [String]? = nil,
         forbidsWrites: Bool = false,
-        emptyContainers: Bool = false
+        emptyContainers: Bool = false,
+        noLiveCertificates: Bool = false
     ) {
+        self.noLiveCertificates = noLiveCertificates
         self.emptyContainers = emptyContainers
         self.existingBundleID = existingBundleID
         self.enabledCapabilities = enabledCapabilities
@@ -516,6 +644,14 @@ final class FakeAppleAPI: Client, @unchecked Sendable {
             return json(
                 status: .created,
                 #"{"data":{"id":"cap-new","attributes":{"capabilityType":"ICLOUD"}}}"#
+            )
+        case (.GET, "/v1/certificates") where noLiveCertificates:
+            return json(
+                #"""
+                {"data":[
+                  {"id":"cert-expired","attributes":{"name":"Developer ID Application","certificateType":"DEVELOPER_ID_APPLICATION","expirationDate":"2020-01-01T00:00:00Z"}}
+                ]}
+                """#
             )
         case (.GET, "/v1/certificates"):
             return json(

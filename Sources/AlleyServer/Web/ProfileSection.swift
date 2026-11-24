@@ -38,18 +38,7 @@ struct ProfileSection: Encodable {
         guard !keys.isEmpty || stored != nil else { return nil }
 
         let plan = ProfilePlan(keys: keys)
-        var blockedReason: String?
-        if !plan.unsupported.isEmpty {
-            blockedReason = """
-                Developer ID 로 배포하는 앱은 이 권한을 쓸 수 없습니다: \
-                \(plan.unsupported.joined(separator: ", ")). 프로필로 풀리지 않으니 권한을 빼고 \
-                다시 빌드해야 합니다.
-                """
-        } else if app.bundleIDPending {
-            blockedReason = "번들 ID 가 확정된 뒤에 발급할 수 있습니다. 첫 서명이 끝나면 정해집니다."
-        } else if plan.keys.isEmpty {
-            blockedReason = "지금 올린 버전들은 프로필이 필요한 권한을 쓰지 않습니다."
-        }
+        let blockedReason = Self.blockedReason(for: app, plan: plan)
 
         return ProfileSection(
             keys: plan.keys,
@@ -64,6 +53,43 @@ struct ProfileSection: Encodable {
             },
             canIssue: isPortalConfigured && blockedReason == nil,
             blockedReason: blockedReason
+        )
+    }
+
+    /// 이 권한으로는 발급할 수 없다면 왜. 연동 여부는 보지 않는다.
+    static func blockedReason(for app: App, plan: ProfilePlan) -> String? {
+        if !plan.unsupported.isEmpty {
+            return """
+                Developer ID 로 배포하는 앱은 이 권한을 쓸 수 없습니다: \
+                \(plan.unsupported.joined(separator: ", ")). 프로필로 풀리지 않으니 권한을 빼고 \
+                다시 빌드해야 합니다.
+                """
+        } else if app.bundleIDPending {
+            return "번들 ID 가 확정된 뒤에 발급할 수 있습니다. 첫 서명이 끝나면 정해집니다."
+        } else if plan.keys.isEmpty {
+            return "지금 올린 버전들은 프로필이 필요한 권한을 쓰지 않습니다."
+        }
+        return nil
+    }
+
+    /// 실패한 버전 옆 "발급하고 다시 시도" 를 막는 이유. 누를 수 있으면 nil.
+    ///
+    /// **앱 구역이 아니라 그 버전의 권한으로 판단한다.** 앱 구역은 최신 버전을 보므로,
+    /// 최신 버전이 프로필을 쓰지 않으면 지난 버전의 버튼까지 막힌다. 발급도 그 버전의
+    /// 권한으로 한다(`issueProfileAndRetry`).
+    static func retryBlockedReason(
+        for app: App,
+        version: Version,
+        isPortalConfigured: Bool
+    ) -> String? {
+        guard isPortalConfigured else {
+            return """
+                App Store Connect 연동이 설정되지 않아 여기서 발급할 수 없습니다. 관리 > 앱 \
+                서명 화면에 무엇을 채워야 하는지 적혀 있습니다.
+                """
+        }
+        return blockedReason(
+            for: app, plan: ProfilePlan(keys: ProfileIssuance.requiredKeys(of: version))
         )
     }
 }

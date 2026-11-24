@@ -107,28 +107,11 @@ enum ProfileIssuance {
             )
         }
 
-        // 1. App ID. 이미 있으면 그것을 쓴다. Xcode 가 만들어 뒀을 수 있다.
-        var createdAppID = false
-        let bundleID: ASCBundleID
-        if let existing = try await client.bundleID(identifier: app.bundleID) {
-            bundleID = existing
-        } else {
-            bundleID = try await client.registerBundleID(identifier: app.bundleID, name: app.name)
-            createdAppID = true
-            logger.notice("App ID 등록 [\(app.bundleID), 프로필 발급 중, 누른 사람: \(user.email)]")
-        }
-
-        // 2. capability. 이미 켜진 것은 건드리지 않는다.
-        let present = try await client.capabilities(ofBundleID: bundleID.id)
-        var enabled: [ProfileCapability] = []
-        for capability in plan.capabilities where !present.contains(capability.rawValue) {
-            try await client.enableCapability(capability, onBundleID: bundleID.id)
-            enabled.append(capability)
-        }
-
-        // 3. 인증서. 살아 있는 Developer ID Application 인증서를 **전부** 넣는다.
+        // 1. 인증서. 살아 있는 Developer ID Application 인증서를 **전부** 넣는다.
         //    서버는 워커가 어느 것으로 서명하는지 모른다. 프로필에 없는 인증서로 서명하면
         //    macOS 가 실행할 때 거절한다.
+        //    **Apple 계정을 바꾸기 전에** 본다. capability 를 켠 뒤에 여기서 멈추면 있던
+        //    프로필만 무효가 되고 새 프로필은 생기지 않는다.
         let certificates = try await client.certificates().filter {
             $0.isDeveloperIDApplication && ($0.expiresAt ?? .distantFuture) > now
         }
@@ -140,6 +123,25 @@ enum ProfileIssuance {
                     인증서를 넣어 만들어야 합니다. 관리 > 앱 서명에서 인증서를 확인하세요.
                     """
             )
+        }
+
+        // 2. App ID. 이미 있으면 그것을 쓴다. Xcode 가 만들어 뒀을 수 있다.
+        var createdAppID = false
+        let bundleID: ASCBundleID
+        if let existing = try await client.bundleID(identifier: app.bundleID) {
+            bundleID = existing
+        } else {
+            bundleID = try await client.registerBundleID(identifier: app.bundleID, name: app.name)
+            createdAppID = true
+            logger.notice("App ID 등록 [\(app.bundleID), 프로필 발급 중, 누른 사람: \(user.email)]")
+        }
+
+        // 3. capability. 이미 켜진 것은 건드리지 않는다.
+        let present = try await client.capabilities(ofBundleID: bundleID.id)
+        var enabled: [ProfileCapability] = []
+        for capability in plan.capabilities where !present.contains(capability.rawValue) {
+            try await client.enableCapability(capability, onBundleID: bundleID.id)
+            enabled.append(capability)
         }
 
         // 4. 프로필. 이름이 겹치면 Apple 이 거절하므로 시각을 붙인다.

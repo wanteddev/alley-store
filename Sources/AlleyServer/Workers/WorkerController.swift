@@ -269,6 +269,29 @@ public struct WorkerController: RouteCollection, Sendable {
                 job.version.profileEntitlements = EntitlementsPlist
                     .requiringProvisioningProfile(in: keys)
                 try await job.version.save(on: request.db)
+
+                // 번들 ID 가 임시값이면 여기서 확정한다. 평소에는 서명이 끝나야 확정하지만,
+                // 프로필은 확정된 번들 ID 로만 발급된다. 여기서 두지 않으면 첫 서명은
+                // 프로필을, 프로필은 첫 서명을 기다린다. 워커는 이미 정책 검사를 마친
+                // 번들에서 읽었고, 이쪽도 같은 검사를 다시 한다.
+                let app = job.version.app
+                if let declared = update.bundleMetadata?.bundleIdentifier, app.bundleIDPending {
+                    do {
+                        try await AppRegistration.confirmBundleID(
+                            app,
+                            readFromBundle: declared,
+                            settings: try await request.storeSettings(),
+                            on: request.db,
+                            logger: request.logger
+                        )
+                    } catch let abort as any AbortError {
+                        // 실패 기록은 그대로 남긴다. 번들 ID 가 정책에 맞지 않으면 프로필을
+                        // 발급해도 소용없고, 그 사실은 발급 칸이 따로 말한다.
+                        request.logger.warning(
+                            "프로필 실패에서 번들 ID 를 확정하지 못함 [\(declared)]: \(abort.reason)"
+                        )
+                    }
+                }
             }
             try await fail(job, reason: update.failureReason, code: update.failureCode, on: request)
         case .queued:

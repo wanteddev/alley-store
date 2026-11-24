@@ -152,7 +152,11 @@ public enum SigningFailureGuidance {
             return """
                 앱을 고칠 일이 아닙니다. 이 앱의 프로비저닝 프로필을 스토어가 발급해야 하고, \
                 그것은 앱 소유자나 관리자가 웹 콘솔의 앱 상세에서 합니다. MCP 로는 할 수 \
-                없습니다. 사람에게 발급을 부탁하고, 발급되면 같은 버전을 다시 시도하면 됩니다.
+                없습니다. 사람에게 발급을 부탁하고, 발급되면 같은 버전을 다시 시도하면 됩니다. \
+                다시 발급한 뒤에도 같은 실패가 나면 실패 사유에 앱이 선언한 값과 프로필이 \
+                허용하는 값이 나옵니다. 앱이 다른 팀의 값이나 잘못된 값을 적었으면 그때는 \
+                entitlements 를 고쳐 다시 빌드해야 하고, iCloud 컨테이너 연결 같은 Apple 쪽 \
+                설정이 원인이면 사람에게 알리세요.
                 """
         case .transferFailed, .appleServiceUnavailable, .timedOut:
             return """
@@ -199,7 +203,9 @@ public enum SigningFailureGuidance {
             // 그 실패 바로 옆에 따로 선다.
             return """
                 앱을 다시 빌드할 일이 아닙니다. 앱 소유자나 관리자가 앱 상세에서 프로필을 \
-                발급하면 같은 파일로 다시 시도할 수 있습니다.
+                발급하면 같은 파일로 다시 시도할 수 있습니다. 프로필을 다시 발급해도 같은 \
+                실패가 나면 앱이 선언한 값이 프로필과 맞지 않는 것입니다. 실패 사유에 적힌 \
+                값을 보고 Apple 개발자 사이트의 설정이나 앱의 entitlements 를 고치세요.
                 """
         case .bundleLayoutInvalid:
             return """

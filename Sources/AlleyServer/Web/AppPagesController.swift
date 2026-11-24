@@ -574,7 +574,7 @@ struct AppPagesController: RouteCollection, Sendable {
                     rating: try await Feedback.summary(ofApp: app.requireID(), on: request.db)
                 ),
                 versions: try versions.map { version in
-                    try VersionRow(
+                    var row = try VersionRow(
                         version: version,
                         attempts: attemptsByVersion[try version.requireID()] ?? [],
                         downloadCount: perVersion[try version.requireID()],
@@ -584,6 +584,14 @@ struct AppPagesController: RouteCollection, Sendable {
                             || (isStoreApp && version.state.isPubliclyVisible),
                         canAnnounce: announceableID != nil && version.id == announceableID
                     )
+                    if canManage, row.needsProfile {
+                        row.profileBlockedReason = ProfileSection.retryBlockedReason(
+                            for: app,
+                            version: version,
+                            isPortalConfigured: request.application.alleyConfig.appStoreConnect != nil
+                        )
+                    }
+                    return row
                 },
                 members: members,
                 ownerCandidates: members.filter { !$0.isOwner && $0.isActive != false },
@@ -1475,6 +1483,9 @@ struct VersionRow: Encodable {
     var needsEntitlements: Bool
     /// 프로필이 없거나 모자라서 멈췄다. 그 자리에 발급 버튼이 선다 (ADR-0084).
     var needsProfile: Bool
+    /// 그 버튼을 누를 수 없다면 왜. 버튼은 비활성으로 두고 이 문장을 함께 보인다.
+    /// 앱 소유자와 관리자에게만 채운다.
+    var profileBlockedReason: String? = nil
     /// 지난 시도들. 최근 것이 위로 온다. 현재 시도는 위 칸이 그리고, 지난 시도는
     /// 접어서 "N번째 시도" 로 골라 본다 (이슈 #85). 재시도가 없었으면 비어 있다.
     var pastAttempts: [SigningAttemptView]
