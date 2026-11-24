@@ -169,17 +169,18 @@ public enum Entitlements {
     /// **서명보다 먼저 해야 한다.** 프로필은 번들의 리소스라 봉인에 들어간다. 서명한
     /// 뒤에 넣으면 봉인이 깨진다.
     ///
-    /// 번들과 `Contents` 가 심볼릭 링크면 쓰지 않는다. 올린 zip 은 링크를 그대로 풀어
-    /// 놓으므로, 링크를 따라가면 작업 디렉터리 밖의 파일을 지우거나 덮어쓴다.
+    /// 번들, `Contents`, 프로필 자리가 심볼릭 링크면 쓰지 않는다. 올린 zip 은 링크를
+    /// 그대로 풀어 놓으므로, 링크를 따라가면 작업 디렉터리 밖의 파일을 지우거나 만든다.
+    /// 프로필 자리가 없는 곳을 가리키는 링크면 "있음" 검사도 거짓이라 쓰기가 링크를 따라간다.
     @discardableResult
     public static func installProfile(_ data: Data, into bundle: URL) throws -> Bool {
-        for url in [bundle, bundle.appendingPathComponent("Contents")] {
+        let location = profileLocation(in: bundle)
+        for url in [bundle, bundle.appendingPathComponent("Contents"), location] {
             let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
             if values?.isSymbolicLink == true {
                 throw InstallError.symbolicLink(path: url.lastPathComponent)
             }
         }
-        let location = profileLocation(in: bundle)
         let replaced = FileManager.default.fileExists(atPath: location.path)
         if replaced { try FileManager.default.removeItem(at: location) }
         try data.write(to: location)

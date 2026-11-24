@@ -191,6 +191,64 @@ struct EntitlementsTests {
         ))
     }
 
+    /// 없는 곳을 가리키는 링크면 "이미 있음" 검사가 거짓이라 쓰기가 링크를 따라간다.
+    @Test("프로필 자리가 바깥을 가리키는 링크면 쓰지 않는다")
+    func installRefusesDanglingProfileLink() throws {
+        let fixture = try BundleFixture()
+        let outside = try fixture.makeDirectory("바깥")
+        let app = try fixture.makeDirectory("도구.app/Contents").deletingLastPathComponent()
+        let target = outside.appendingPathComponent("생길-파일")
+        try FileManager.default.createSymbolicLink(
+            at: Entitlements.profileLocation(in: app), withDestinationURL: target
+        )
+
+        #expect(throws: Entitlements.InstallError.self) {
+            try Entitlements.installProfile(FakeProfile.make(allowing: []), into: app)
+        }
+        #expect(!FileManager.default.fileExists(atPath: target.path))
+    }
+
+    /// 바깥 앱의 대조는 바깥 프로필만 본다. 헬퍼가 자기 프로필을 가졌으면 그것으로도
+    /// 대조해야 한다. 스토어가 풀 수 없는 실패라 프로필 갈래가 아니다.
+    @Test("자기 프로필을 가진 헬퍼도 그 프로필로 대조한다")
+    func validatesHelpersWithOwnProfile() async throws {
+        let fixture = try BundleFixture()
+        let app = try fixture.makeDirectory("도구.app/Contents").deletingLastPathComponent()
+        let helper = try fixture.makeDirectory("도구.app/Contents/Library/LoginItems/도우미.app/Contents")
+            .deletingLastPathComponent()
+        try FakeProfile.make(allowing: ["com.apple.developer.icloud-services"])
+            .write(to: Entitlements.profileLocation(in: helper))
+        let both = Data("""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <plist version="1.0"><dict>
+            <key>com.apple.developer.icloud-services</key><array><string>CloudKit</string></array>
+            <key>com.apple.developer.aps-environment</key><string>production</string>
+            </dict></plist>
+            """.utf8)
+        let icloudOnly = Data("""
+            <?xml version="1.0" encoding="UTF-8"?>
+            <plist version="1.0"><dict>
+            <key>com.apple.developer.icloud-services</key><array><string>CloudKit</string></array>
+            </dict></plist>
+            """.utf8)
+
+        do {
+            try await SigningPipeline.validateHelpersWithOwnProfile(
+                [helper, app], of: AppBundle(url: app), provided: both
+            )
+            Issue.record("헬퍼 프로필이 허용하지 않는 권한이 있으면 막아야 한다")
+        } catch let error as SigningPipeline.PipelineError {
+            #expect(error.failureCode == .entitlementsRejected)
+            #expect(error.description.contains("도우미.app"))
+            #expect(error.description.contains("com.apple.developer.aps-environment"))
+        }
+
+        // 헬퍼 프로필과 맞으면 통과한다.
+        try await SigningPipeline.validateHelpersWithOwnProfile(
+            [helper, app], of: AppBundle(url: app), provided: icloudOnly
+        )
+    }
+
     @Test("번들에 프로필이 없으면 새로 넣는다")
     func installAddsProfile() throws {
         let fixture = try BundleFixture()

@@ -133,6 +133,7 @@ public struct SigningPipeline: Sendable {
                 guard let identifier = bundle.bundleIdentifier else { throw validation }
                 throw ProfileBlocked(validation: validation, bundleIdentifier: identifier)
             }
+            try await Self.validateHelpersWithOwnProfile(targets, of: bundle, provided: provided)
 
             var codesigningDetail = "서명 대상 \(targets.count)개"
             if declaredKeys.isEmpty {
@@ -511,6 +512,53 @@ public struct SigningPipeline: Sendable {
         try Entitlements.validate(bundle: bundle.url, propertyList: declared)
         try requireJITForElectron(bundle: bundle, declaredKeys: keys)
         return keys
+    }
+
+    /// 자기 프로필을 가진 헬퍼 `.app` 도 그 프로필로 대조한다.
+    ///
+    /// 바깥 앱의 대조는 바깥 프로필만 본다. 헬퍼는 서명할 때 신원만 자기 프로필로 맞추므로,
+    /// 헬퍼 프로필이 허용하지 않는 권한이 그대로 실리면 공증은 통과하고 실행할 때 죽는다.
+    ///
+    /// **프로필 갈래로 보내지 않는다.** 스토어가 발급하는 것은 바깥 앱의 프로필뿐이라,
+    /// 그 갈래의 "발급하고 다시 시도" 는 아무리 눌러도 풀리지 않는다. 고칠 것은 앱이다.
+    static func validateHelpersWithOwnProfile(
+        _ targets: [URL],
+        of bundle: AppBundle,
+        provided: Data?
+    ) async throws {
+        let outer = bundle.url.standardizedFileURL.path
+        for helper in targets
+        where helper.pathExtension == "app"
+            && helper.standardizedFileURL.path != outer
+            && Entitlements.hasProvisioningProfile(in: helper)
+        {
+            // 서명에 실릴 것과 같은 것을 본다(`entitlementsFile`).
+            let declared: Data
+            if let provided {
+                declared = provided
+            } else {
+                declared = await Entitlements.read(of: helper)
+            }
+            do {
+                try Entitlements.validate(bundle: helper, propertyList: declared)
+            } catch let validation as Entitlements.ValidationError {
+                let listed: String
+                if case .profileDoesNotAllow(_, _, let disallowed, let details) = validation {
+                    listed = (details.isEmpty ? disallowed : details).joined(separator: "; ")
+                } else {
+                    listed = validation.description
+                }
+                throw PipelineError.commandFailed(
+                    step: "번들 검사",
+                    code: .entitlementsRejected,
+                    detail: """
+                        헬퍼 \(helper.lastPathComponent) 에 든 프로필이 이 권한을 허용하지 \
+                        않습니다: \(listed). 헬퍼 프로필은 스토어가 발급하지 않으니 맞는 \
+                        프로필을 넣거나 권한을 빼고 다시 올려야 합니다.
+                        """
+                )
+            }
+        }
     }
 
     /// 번들 ID 가 받아들일 만한지 본다. 서명 전에 한다.
