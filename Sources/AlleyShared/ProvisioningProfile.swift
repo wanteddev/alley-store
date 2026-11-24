@@ -122,12 +122,12 @@ public struct ProvisioningProfile: Sendable, Equatable {
         return EntitlementsPlist.requiringProvisioningProfile(in: declared.keys).filter { key in
             guard allowed.contains(key) else { return true }
             guard !Self.identityKeys.contains(key),
-                  let wanted = declared[key] ?? nil,
+                  let requested = declared[key] ?? nil,
                   let granted = entitlementValues[key]
             else {
                 return false
             }
-            return !wanted.allSatisfy { value in
+            return !requested.allSatisfy { value in
                 granted.contains { Self.matches(pattern: $0, value: value) }
             }
         }
