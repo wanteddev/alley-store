@@ -2,7 +2,7 @@ import AlleyShared
 import Foundation
 import Testing
 
-/// 서버(리눅스)와 워커(macOS)가 같은 코드로 프로필을 읽는다 (ADR-0084). `security cms`
+/// 서버(리눅스)와 워커(macOS)가 같은 코드로 프로필을 읽는다 (ADR-0085). `security cms`
 /// 없이 CMS 안의 plist 를 꺼내는 것이 여기서 지키는 것이다.
 @Suite("프로비저닝 프로필 읽기")
 struct ProvisioningProfileTests {

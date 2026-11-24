@@ -3,8 +3,8 @@
 <h1 class="page-title">앱 서명</h1>
 <p class="page-lead">
     앱에 서명할 수 있는 상태인지 보는 곳입니다. 서명은 <a href="/admin/workers">서명 워커</a>가
-    자기 맥에서 하고, 여기서는 그때 쓰는 Apple 쪽 자격 - 인증서와 App ID - 의 현황만
-    봅니다. 발급과 폐기는 Apple 화면에서 하고, 서명 키는 이 서버에 오지 않습니다.
+    자기 맥에서 하고, 여기서는 그때 쓰는 Apple 쪽 자격 - 멤버십, 인증서, App ID - 의
+    현황만 봅니다. 발급과 폐기는 Apple 화면에서 하고, 서명 키는 이 서버에 오지 않습니다.
 </p>
 
 #if(error):
@@ -70,7 +70,7 @@
     </div>
     <p class="field-note">
         이것이 만료되면 워커가 서명을 못 합니다. 갱신은 손이 여러 번 가는 일이라
-        30일 전부터 표시합니다.
+        30일 전부터 표시하고 관리자에게도 알립니다.
     </p>
     #endif
 
@@ -116,7 +116,52 @@
     </details>
     #endif
 </section>
+#endif
 
+<!-- 멤버십 만료일은 Apple 이 API 로 주지 않아 관리자가 적는다. 만료 감시가 이 값을
+     보고 알린다 (ADR-0084). App Store Connect 와 상관없는 칸이라 연동이 꺼져 있어도
+     그린다. -->
+<section class="section">
+    <h2 class="section-title">Apple Developer Program 멤버십</h2>
+    #if(savedMembership):
+    <p class="notice notice-ok">멤버십 만료일을 저장했습니다.</p>
+    #endif
+    #if(membership.expiresOn):
+    #else:
+    <div class="empty">
+        <p>멤버십 만료일을 적지 않았습니다.</p>
+        <p class="empty-note">
+            만료되면 새 인증서를 받을 수 없고 공증도 막힐 수 있습니다. 적어두면 30일 전부터
+            관리자에게 알리고, 적을 때까지는 일주일마다 적어 달라고 알립니다.
+        </p>
+    </div>
+    #endif
+    <form class="form-inline" method="post" action="/admin/portal/membership">
+        <label class="field">
+            <span class="field-label">만료일</span>
+            <input class="input" type="date" name="membershipExpiresOn"
+                   value="#(membership.expiresOn)">
+        </label>
+        <button class="button" type="submit">저장</button>
+        #if(membership.isExpired):
+        <span class="badge badge-failed">만료일 지남</span>
+        #elseif(membership.needsAttention):
+        <span class="badge badge-failed">#(membership.daysLeft)일 남음</span>
+        #elseif(membership.expiresOn):
+        <span class="table-muted">#(membership.daysLeft)일 남음</span>
+        #endif
+    </form>
+    #if(membership.expiresOn):
+    <p class="field-note">
+        Apple 이 API 로 알려주지 않는 값이라 손으로 적습니다. Apple Developer 계정의
+        Membership 화면에 나옵니다. 적어두면 30일 전부터 관리자에게 알립니다.
+        갱신하면 새 만료일로 고치세요. 그대로 두면 지난 날짜로 보고 계속 알립니다.
+        비워두면 적을 때까지 일주일마다 알립니다.
+    </p>
+    #endif
+</section>
+
+#if(isConfigured):
 <section class="section">
     <h2 class="section-title">App ID</h2>
     <p class="page-lead">

@@ -3,7 +3,7 @@ import Foundation
 import SQLKit
 import Vapor
 
-/// 스토어가 그 앱에 발급해 둔 Developer ID 프로비저닝 프로필 (ADR-0084).
+/// 스토어가 그 앱에 발급해 둔 Developer ID 프로비저닝 프로필 (ADR-0085).
 ///
 /// 앱마다 하나다. 다시 발급하면 이 행을 바꾸고 Apple 쪽 옛 프로필은 지운다. 프로필은
 /// Apple 이 고칠 수 없게 해 둬서 다시 만드는 것 말고 방법이 없다.
@@ -86,7 +86,7 @@ public struct CreateIssuedProfile: AsyncMigration {
     }
 }
 
-/// 워커가 "이 권한에 프로필이 필요하다" 고 보고한 키를 버전에 둔다 (ADR-0084).
+/// 워커가 "이 권한에 프로필이 필요하다" 고 보고한 키를 버전에 둔다 (ADR-0085).
 ///
 /// 업로더가 entitlements 를 주지 않은 앱은 서버가 그 앱의 권한을 알 길이 없다. 번들의
 /// 기존 서명에 붙은 권한은 워커만 읽는다. 이 칸이 없으면 프로필을 발급할 자리가 영영

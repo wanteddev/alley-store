@@ -10,9 +10,13 @@ import Vapor
 /// 같은 모양의 루프가 셋이 되어 여기로 모았다. 정책은 하나뿐이다. 뜨자마자 돌지
 /// 않고 첫 주기를 기다린다. 기동 직후에는 워커가 아직 붙기 전이라, 그때 훑으면
 /// 멀쩡한 것을 죽었다고 판단한다.
+///
+/// 주기가 긴 작업은 첫 실행을 앞당길 수 있다(`firstRunAfter`). 6시간 주기인데 그보다
+/// 자주 배포하면 한 번도 돌지 못한다. 워커 상태와 상관없는 작업에만 쓴다.
 public final class PeriodicSweep: LifecycleHandler, @unchecked Sendable {
     private let name: String
     private let interval: Duration
+    private let firstRunAfter: Duration
     private let body: @Sendable (Application) async -> Void
 
     // Task 는 didBoot 에서 만들어 shutdown 에서 취소한다. LifecycleHandler 의
@@ -23,20 +27,23 @@ public final class PeriodicSweep: LifecycleHandler, @unchecked Sendable {
     public init(
         name: String,
         interval: Duration,
+        firstRunAfter: Duration? = nil,
         body: @escaping @Sendable (Application) async -> Void
     ) {
         self.name = name
         self.interval = interval
+        self.firstRunAfter = firstRunAfter ?? interval
         self.body = body
     }
 
     public func didBootAsync(_ application: Application) async throws {
         let interval = self.interval
+        let firstRunAfter = self.firstRunAfter
         let body = self.body
         let name = self.name
 
         let task = Task {
-            try? await Task.sleep(for: interval)
+            try? await Task.sleep(for: firstRunAfter)
             while !Task.isCancelled {
                 await body(application)
                 try? await Task.sleep(for: interval)

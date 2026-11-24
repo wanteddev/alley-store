@@ -59,6 +59,17 @@ public func configure(_ app: Application, config: AppConfig) async throws {
             await UserTokenExpiryNotice.run(on: application)
         }
     )
+    // 서명용 인증서와 멤버십이 만료되기 전에 관리자에게 알린다 (ADR-0084). 주기가
+    // 6시간이라 첫 실행은 앞당긴다. 그보다 자주 배포하면 한 번도 돌지 못한다.
+    app.lifecycle.use(
+        PeriodicSweep(
+            name: "만료 감시",
+            interval: ExpiryWatch.checkInterval,
+            firstRunAfter: ExpiryWatch.firstRunAfter
+        ) { application in
+            await ExpiryWatch.run(on: application)
+        }
+    )
     // 관리자에게 스토어 주간·월간 소식을 보낸다 (ADR-0076, ADR-0081). 한 시간마다 보낼
     // 때가 됐는지 본다.
     app.lifecycle.use(
@@ -219,7 +230,10 @@ private func configureMigrations(_ app: Application) {
     app.migrations.add(AddAppVideo())
     app.migrations.add(AddMonthlyDigestPreferenceToUser())
 
-    // 스토어가 프로비저닝 프로필을 발급해 보관한다 (이슈 #90, ADR-0084).
+    // 인증서·멤버십 만료를 감시한다 (이슈 #89, ADR-0084).
+    app.migrations.add(AddMembershipExpiresOnSetting())
+    app.migrations.add(CreateExpiryWatch())
+    // 스토어가 프로비저닝 프로필을 발급해 보관한다 (이슈 #90, ADR-0085).
     app.migrations.add(CreateIssuedProfile())
     app.migrations.add(AddVersionProfileEntitlements())
 }

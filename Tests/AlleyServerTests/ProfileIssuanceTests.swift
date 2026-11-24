@@ -9,7 +9,7 @@ import VaporTesting
 
 @testable import AlleyServer
 
-/// 무엇을 켤지 정하는 계산 (ADR-0084). 화면이 미리 말하는 것과 버튼이 실제로 하는
+/// 무엇을 켤지 정하는 계산 (ADR-0085). 화면이 미리 말하는 것과 버튼이 실제로 하는
 /// 것이 이 하나에서 나온다.
 @Suite("프로필 발급 계획")
 struct ProfilePlanTests {
@@ -322,7 +322,7 @@ struct ProfileIssuanceTests {
     }
 }
 
-/// 워커와 화면 사이의 연결 (ADR-0084).
+/// 워커와 화면 사이의 연결 (ADR-0085).
 @Suite("프로필과 서명 잡")
 struct ProfileSigningFlowTests {
     private var nextJobPath: String { "\(APIPath.nextJob)?timeout=0" }

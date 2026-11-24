@@ -50,7 +50,7 @@ public final class Version: Model, @unchecked Sendable {
     @OptionalField(key: "entitlements")
     public var entitlements: String?
 
-    /// 워커가 서명을 멈추며 "프로필이 있어야 한다" 고 보고한 권한 키 (ADR-0084).
+    /// 워커가 서명을 멈추며 "프로필이 있어야 한다" 고 보고한 권한 키 (ADR-0085).
     ///
     /// 위의 `entitlements` 는 업로더가 준 것만 담는다. 이미 서명된 번들의 권한은 워커가
     /// 읽어야 알 수 있어서, 그 결과를 여기 받는다.

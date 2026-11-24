@@ -15,7 +15,7 @@ struct FailureClassificationTests {
         #expect(SigningFailureCode.classify(ambiguous) == .bundleLayoutInvalid)
     }
 
-    /// 고칠 것이 앱이 아니라 스토어의 프로필이다 (ADR-0084). entitlements 갈래로
+    /// 고칠 것이 앱이 아니라 스토어의 프로필이다 (ADR-0085). entitlements 갈래로
     /// 두면 화면이 "entitlements 를 붙여 다시 시도" 하는 칸을 내미는데, 그것은 헛걸음이다.
     @Test("프로필이 없거나 모자라면 프로필 갈래다")
     func missingProfileIsProfileProblem() {

@@ -1,7 +1,7 @@
 import AlleyShared
 import Foundation
 
-/// App ID 에 켜는 capability 중 스토어가 알아서 켜는 것 (ADR-0084).
+/// App ID 에 켜는 capability 중 스토어가 알아서 켜는 것 (ADR-0085).
 ///
 /// 값은 App Store Connect API 의 `CapabilityType` 이다. **맥의 Developer ID 앱이 쓸 수
 /// 있고, API 로 켤 수 있는 것만 둔다.** Sign in with Apple 처럼 Developer ID 가 못 쓰는

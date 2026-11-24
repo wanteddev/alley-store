@@ -553,7 +553,7 @@ struct AppPagesController: RouteCollection, Sendable {
             portalNotice = ProfileIssuance.Outcome.issuedNotice
         }
 
-        // 프로필이 필요한 권한을 쓰는 앱에만 프로필 자리를 낸다 (ADR-0005, ADR-0084).
+        // 프로필이 필요한 권한을 쓰는 앱에만 프로필 자리를 낸다 (ADR-0005, ADR-0085).
         // 그 판단은 entitlements 가 들어온 뒤에야 할 수 있어서, 앱을 만드는 화면이
         // 아니라 여기에 둔다. 업로더가 준 것과 워커가 번들에서 읽어 보고한 것을 합친다.
         let profile: ProfileSection? = canManage
@@ -771,7 +771,7 @@ struct AppPagesController: RouteCollection, Sendable {
 
     // MARK: - 프로비저닝 프로필
 
-    /// 이 앱의 프로비저닝 프로필을 발급한다 (ADR-0084).
+    /// 이 앱의 프로비저닝 프로필을 발급한다 (ADR-0085).
     ///
     /// **값을 묻지 않는다.** 번들 ID 와 이름은 앱을 등록할 때 받았고, 켤 capability 는
     /// entitlements 에서 나온다. App ID 가 없으면 만들고, 모자란 capability 를 켜고,
@@ -1481,7 +1481,7 @@ struct VersionRow: Encodable {
     var canRetry: Bool
     /// 권한이 모자라 실패했나. 그때만 재시도 자리에 entitlements 칸을 낸다 (ADR-0036).
     var needsEntitlements: Bool
-    /// 프로필이 없거나 모자라서 멈췄다. 그 자리에 발급 버튼이 선다 (ADR-0084).
+    /// 프로필이 없거나 모자라서 멈췄다. 그 자리에 발급 버튼이 선다 (ADR-0085).
     var needsProfile: Bool
     /// 그 버튼을 누를 수 없다면 왜. 버튼은 비활성으로 두고 이 문장을 함께 보인다.
     /// 앱 소유자와 관리자에게만 채운다.
@@ -1770,7 +1770,7 @@ struct AppDetailContext: Encodable {
     var entitlementsElectronNotes: String
     /// 본보기 뒤에 붙는 한 줄. 그대로 쓰면 안 되는 경우.
     var entitlementsElectronCaveat: String
-    /// 프로비저닝 프로필 구역 (ADR-0084).
+    /// 프로비저닝 프로필 구역 (ADR-0085).
     ///
     /// 프로필이 필요한 권한을 안 쓰고 발급한 것도 없으면 nil 이고, 그 자리를 그리지
     /// 않는다. 관리할 수 없는 사람에게는 늘 nil 이다.

@@ -216,7 +216,7 @@ public struct WorkerController: RouteCollection, Sendable {
         let settings = try await request.storeSettings()
         let pending = job.version.app.bundleIDPending
 
-        // 스토어가 발급해 둔 프로필이 있으면 함께 보낸다 (ADR-0084). 워커가 번들에 넣고
+        // 스토어가 발급해 둔 프로필이 있으면 함께 보낸다 (ADR-0085). 워커가 번들에 넣고
         // 서명한다. 없으면 워커는 번들에 든 것만 본다.
         let profile = try await IssuedProfile.query(on: request.db)
             .filter(\.$app.$id == appID)
@@ -264,7 +264,7 @@ public struct WorkerController: RouteCollection, Sendable {
             try await finishSuccessfully(job, update: update, on: request)
         case .failed:
             // 프로필 때문에 멈췄으면 어떤 권한이었는지 버전에 둔다. 앱 상세가 이것을 보고
-            // 프로필을 발급할 자리를 낸다 (ADR-0084).
+            // 프로필을 발급할 자리를 낸다 (ADR-0085).
             if let keys = update.profileEntitlements, !keys.isEmpty {
                 job.version.profileEntitlements = EntitlementsPlist
                     .requiringProvisioningProfile(in: keys)

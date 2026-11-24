@@ -79,7 +79,7 @@ Xcode의 자동 서명이 Developer ID 빌드에서도 App ID와 프로필을 �
 
 다만 restricted entitlement를 쓰는 앱은 `Contents/embedded.provisionprofile`이
 **서명 이전에** 번들 안에 있어야 합니다. 그 프로필은 **스토어가 발급합니다**
-([ADR-0084](adr/0084-store-issues-provisioning-profiles.md)). 앱 소유자나 관리자가 앱
+([ADR-0085](adr/0085-store-issues-provisioning-profiles.md)). 앱 소유자나 관리자가 앱
 상세에서 누르면 서버가 App Store Connect 로 App ID 를 확인하고, 필요한 capability 를 켜고,
 워커가 쓰는 Developer ID 인증서를 넣어 프로필을 만들어 보관합니다. 워커는 서명 잡
 지시서로 받은 프로필을 번들에 넣고 서명합니다. 개발자가 넣어 온 프로필이 있어도 스토어
@@ -122,7 +122,7 @@ restricted 로 보는 기준은 `com.apple.developer.` 로 시작하는 키와
 
 스토어가 프로필을 발급할 때는 앱마다 explicit App ID 를 씁니다. 실제로 프로필이 필요한
 앱은 거의 다 capability 가 필요한데, 와일드카드에는 그것을 켤 수 없어서입니다
-([ADR-0084](adr/0084-store-issues-provisioning-profiles.md)). 가운데 칸의 와일드카드는
+([ADR-0085](adr/0085-store-issues-provisioning-profiles.md)). 가운데 칸의 와일드카드는
 사람이 직접 프로필을 만들 때를 위해 남아 있습니다.
 
 ### 스토어가 ID 대장 역할을 한다
@@ -320,7 +320,7 @@ Google 에서는 `hd`(hosted domain) claim 까지 함께 봅니다. 그 claim �
 | 테이블              | 주요 필드                                                      |
 | ---------------- | ---------------------------------------------------------- |
 | `users`          | google_sub, email, name, avatar_url, role, deactivated_at  |
-| `store_settings` | 스토어 이름, 로고, 강조색, 허용 도메인, 번들 ID 프리픽스 (singleton, [ADR-0011](adr/0011-store-settings-in-database.md)) |
+| `store_settings` | 스토어 이름, 로고, 강조색, 허용 도메인, 번들 ID 프리픽스, 멤버십 만료일 (singleton, [ADR-0011](adr/0011-store-settings-in-database.md)) |
 | `branding_assets` | 종류(파비콘·로고·앱 아이콘), 스토리지 키, 크기 ([ADR-0045](adr/0045-branding-assets-in-storage.md)) |
 | `store_app_settings` | 스토어 앱의 번들 ID·이름·URL 스킴·베이스 번들 (singleton, [ADR-0046](adr/0046-server-assembles-store-app.md)) |
 | `apps`           | bundle_id, 이름, 아이콘, 설명, 분류(`AppCategory` 8개 중 하나, [ADR-0070](adr/0070-app-categories-are-a-fixed-list.md)), 태그(검색용, 10개·20자까지), 스크린샷 키(5장까지, [ADR-0071](adr/0071-app-screenshots-need-sign-in.md)), 동영상 키(하나, [ADR-0079](adr/0079-app-video-goes-through-a-presigned-redirect.md)), owner_id |
@@ -335,6 +335,8 @@ Google 에서는 `hd`(hosted domain) claim 까지 함께 봅니다. 그 claim �
 | `user_tokens`    | user_id, 이름, 토큰 해시, 만료 (에이전트용, [ADR-0060](adr/0060-mcp-connects-as-a-person.md)) |
 | `feedback`       | app_id, version_id, user_id, 별점(새로 남길 때 필수), 글, 스크린샷, 익명 여부 |
 | `notification_targets` | app_id(nullable), 종류, 이름, 엔드포인트                     |
+| `expiry_notices` | 만료 감시 대상, 알릴 때 본 만료 시각, 마지막으로 알린 단계 ([ADR-0084](adr/0084-watch-expiry-in-stages-and-ask-for-the-membership-date.md)) |
+| `expiry_source_failures` | 만료 정보를 못 읽은 곳, 실패가 시작된 때, 알린 때 (ADR-0084) |
 
 
 버전 상태 머신:
@@ -410,7 +412,7 @@ Hardened Runtime은 공증 요건이라 언제나 켭니다. 그런데 그 아�
 `--entitlements`는 번들의 주 실행 파일에 쓰는 것입니다.
 
 프로필을 쓰는 앱이면 두 가지를 더 손봅니다
-([ADR-0084](adr/0084-store-issues-provisioning-profiles.md)). 바깥 `.app` 의
+([ADR-0085](adr/0085-store-issues-provisioning-profiles.md)). 바깥 `.app` 의
 `com.apple.application-identifier` 와 `com.apple.developer.team-identifier` 를 프로필
 값으로 맞춥니다. 없으면 채우고, 다른 팀의 값이 남아 있으면 덮어씁니다. macOS 는 이 값으로
 프로필이 이 앱 것인지 확인합니다. 헬퍼
@@ -769,6 +771,28 @@ Slack 채널에 소식을 올립니다 ([ADR-0075](adr/0075-announce-releases-to
 - **월간도 따로 켤 수 있습니다** ([ADR-0081](adr/0081-monthly-store-digest-is-a-separate-opt-in.md)).
   매달 1일 오전 10시에 지난달을 같은 글로 묶어 보냅니다. 기본은 꺼짐이고, 주간과 둘 다 켜면
   둘 다 갑니다. 출시가 드문 스토어는 주간이 거의 비어서 한 달치가 옮겨 붙이기 좋습니다
+
+### 5.10 만료 감시
+
+인증서나 멤버십이 끊기면 앱 하나가 아니라 모든 앱의 서명이 한꺼번에 멈춥니다. 앱 서명
+화면은 그 화면을 여는 사람이 있어야 보이므로, 주기 작업이 지켜보고 운영 알림으로
+알립니다 ([ADR-0084](adr/0084-watch-expiry-in-stages-and-ask-for-the-membership-date.md)).
+
+| 무엇 | 어디서 읽나 |
+| --- | --- |
+| 서명용 Developer ID 인증서 | App Store Connect API. 앱 서명 화면의 "서명용 인증서" 와 같은 기준 |
+| Apple Developer Program 멤버십 | 관리자가 앱 서명 화면에 적은 날짜. ASC API 에 값이 없습니다 |
+
+- **30·14·7·1일 전에 한 번씩 알립니다.** 처음 볼 때 이미 가까우면 지금 단계 한 통만
+  갑니다. 30일은 앱 서명 화면이 빨개지는 날과 같습니다
+- **만료됐거나 멤버십 날짜가 비어 있으면 일주일마다 다시 알립니다.** 비어 있는 것을
+  끄는 자리는 없습니다
+- **ASC 를 하루 넘게 못 읽으면 한 번 알립니다.** API 키 폐기나 멤버십 단절을 날짜와
+  별개로 잡습니다
+- 알림은 운영 알림 설정(채널 또는 관리자 개인)을 따릅니다. 실제로 닿은 것만 보냈다고
+  적고, 아무 데도 닿지 않았으면 다음 주기에 다시 봅니다
+- 스토어가 보는 것은 ASC 의 기록입니다. 워커 키체인에 실제로 있는 인증서와는 아직
+  대조하지 않습니다
 
 ## 6. 리스크와 대응
 

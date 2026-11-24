@@ -2,7 +2,7 @@ import AlleyShared
 import Fluent
 import Foundation
 
-/// 앱 상세의 프로비저닝 프로필 구역에 그릴 것 (ADR-0084).
+/// 앱 상세의 프로비저닝 프로필 구역에 그릴 것 (ADR-0085).
 ///
 /// **누르기 전에 무엇을 할지 보여준다.** 버튼 하나가 App ID 생성, capability 켜기,
 /// 프로필 생성까지 하므로, 그중 무엇이 Apple 계정을 바꾸는지와 스토어가 못 하는 것이

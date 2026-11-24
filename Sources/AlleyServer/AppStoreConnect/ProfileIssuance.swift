@@ -3,7 +3,7 @@ import Fluent
 import Foundation
 import Vapor
 
-/// 앱 하나에 Developer ID 프로비저닝 프로필을 발급하는 규칙 (ADR-0084).
+/// 앱 하나에 Developer ID 프로비저닝 프로필을 발급하는 규칙 (ADR-0085).
 ///
 /// **버튼 한 번에 끝까지 간다.** App ID 가 없으면 만들고, 모자란 capability 를 켜고,
 /// 프로필을 만들어 보관한다. 단계를 나눠 누르게 하면 사람이 순서를 알아야 하고,

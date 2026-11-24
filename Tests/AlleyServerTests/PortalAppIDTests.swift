@@ -5,7 +5,7 @@ import VaporTesting
 
 @testable import AlleyServer
 
-/// 포털에 App ID 와 프로필을 만들 자리를 어디에 둘지 (ADR-0005, ADR-0053, ADR-0084).
+/// 포털에 App ID 와 프로필을 만들 자리를 어디에 둘지 (ADR-0005, ADR-0053, ADR-0085).
 ///
 /// 앱을 만드는 화면에는 둘 수 없다. 프로필이 필요한지는 entitlements 를 봐야 아는데
 /// 그것은 버전을 올릴 때 들어온다. 그래서 앱 상세에, 그 권한이 실제로 보인 뒤에 둔다.

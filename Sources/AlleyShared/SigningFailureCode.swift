@@ -26,7 +26,7 @@ public enum SigningFailureCode: String, Codable, Sendable, CaseIterable, Equatab
     /// entitlements 가 모자라거나(JIT 누락), Developer ID 로는 쓸 수 없는 권한이다.
     case entitlementsRejected = "entitlements_rejected"
     /// 프로필이 필요한 권한을 쓰는데 프로필이 없거나, 있는 프로필이 그 권한을 허용하지
-    /// 않는다. 앱이 아니라 프로필을 고쳐야 한다 (ADR-0084).
+    /// 않는다. 앱이 아니라 프로필을 고쳐야 한다 (ADR-0085).
     ///
     /// `entitlementsRejected` 에서 갈라 냈다. 그 갈래에는 "entitlements 를 붙여 다시
     /// 시도" 하는 칸이 따라오는데(ADR-0036), 프로필이 모자란 사람에게 그 칸은 엉뚱한
