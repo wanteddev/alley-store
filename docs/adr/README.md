@@ -91,6 +91,7 @@
 | [0081](0081-monthly-store-digest-is-a-separate-opt-in.md) | 스토어 월간 소식은 주간과 따로 켜는 칸으로 두고, 같은 글을 한 달치로 묶는다 | 수락됨 | 2026-10-27 |
 | [0082](0082-send-release-news-later-for-the-latest-release.md) | 알리지 않고 출시한 가장 최근 출시본은 나중에 소식을 보낼 수 있다 | 수락됨 | 2026-11-03 |
 | [0083](0083-signing-attempts-split-current-and-history.md) | 서명 시도를 현재와 지난 시도로 나눠 보여준다 | 수락됨 | 2026-11-05 |
+| [0084](0084-watch-expiry-in-stages-and-ask-for-the-membership-date.md) | 만료는 단계마다 한 번 알리고, 멤버십 만료일은 관리자가 적는다 | 수락됨 | 2026-11-23 |
 
 ## 언제 쓰나
 

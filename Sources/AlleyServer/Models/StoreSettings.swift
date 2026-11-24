@@ -76,6 +76,14 @@ public final class StoreSettings: Model, @unchecked Sendable {
         set { operationalAlertsRaw = newValue.rawValue }
     }
 
+    /// Apple Developer Program 멤버십 만료일. `2027-03-15` 꼴이고 비어 있으면 모른다.
+    ///
+    /// **관리자가 손으로 적는다** (ADR-0084). App Store Connect API 에 이 값이 없다.
+    /// 시각이 아니라 날짜로 둔다. Apple 화면이 날짜만 보여주고, 시각으로 바꿔 담으면
+    /// 서버 타임존에 따라 하루가 밀린다.
+    @OptionalField(key: "membership_expires_on")
+    public var membershipExpiresOn: String?
+
     /// 마지막으로 설정을 바꾼 사람. 로그인 도메인처럼 위험한 항목이 있어서
     /// 누가 건드렸는지는 남겨둔다.
     @OptionalParent(key: "updated_by")
@@ -278,6 +286,35 @@ public struct RenameAdminsAlertTarget: AsyncMigration {
         }
         try await sql.raw(
             "UPDATE store_settings SET operational_alerts = 'admins' WHERE operational_alerts = 'people'"
+        ).run()
+    }
+}
+
+/// 멤버십 만료일 칸을 만든다 (ADR-0084).
+///
+/// 비워 두고 시작한다. 이미 도는 스토어도 이 칸이 생기는 순간부터 "만료일이 비어
+/// 있다" 는 알림을 받는다. 그것이 의도다. Apple Developer Program 멤버십 없이 쓰는
+/// 스토어는 없다.
+///
+/// `AddOperationalAlertsSetting` 처럼 원 SQL 로 두고 다시 돌려도 되게 한다.
+public struct AddMembershipExpiresOnSetting: AsyncMigration {
+    public init() {}
+
+    public func prepare(on database: any Database) async throws {
+        guard let sql = database as? any SQLDatabase else {
+            throw MigrationError.needsSQLDatabase
+        }
+        try await sql.raw(
+            "ALTER TABLE store_settings ADD COLUMN IF NOT EXISTS membership_expires_on text"
+        ).run()
+    }
+
+    public func revert(on database: any Database) async throws {
+        guard let sql = database as? any SQLDatabase else {
+            throw MigrationError.needsSQLDatabase
+        }
+        try await sql.raw(
+            "ALTER TABLE store_settings DROP COLUMN IF EXISTS membership_expires_on"
         ).run()
     }
 }

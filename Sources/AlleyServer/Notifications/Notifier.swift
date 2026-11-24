@@ -149,24 +149,30 @@ public struct Notifier: Sendable {
     }
 
     /// 전역 대상들에게 보낸다. 워커 알림처럼 앱과 무관한 것.
-    public func notifyGlobal(message: NotificationMessage) async {
+    @discardableResult
+    public func notifyGlobal(message: NotificationMessage) async -> Bool {
         let targets = (try? await NotificationTarget.query(on: database)
             .filter(\.$app.$id == nil)
             .all()) ?? []
-        await deliver(message, to: targets)
+        return await deliver(message, to: targets)
     }
 
     /// 운영 알림. 스토어가 정한 곳 **한 군데**로 보낸다.
     ///
     /// 채널과 개별을 함께 보내지 않는다. 같은 알림이 두 번 오면 한 번 오는 것보다
     /// 빨리 무시당한다. 어느 쪽인지는 관리 화면에서 정한다.
-    public func notifyOperators(_ message: NotificationMessage) async {
+    ///
+    /// 한 군데라도 실제로 보냈으면 true. 만료 감시처럼 "보냈다" 를 적어두고 다시
+    /// 보내지 않는 쪽이 이 값을 본다. 채널을 골라 놓고 등록한 채널이 없거나, 관리자
+    /// 누구에게도 닿을 수단이 없으면 false 다 (`ExpiryWatch`).
+    @discardableResult
+    public func notifyOperators(_ message: NotificationMessage) async -> Bool {
         let settings = try? await StoreSettings.find(StoreSettings.singletonID, on: database)
         switch settings?.operationalAlerts ?? .people {
         case .channel:
-            await notifyGlobal(message: message)
+            return await notifyGlobal(message: message)
         case .people:
-            await notifyAdmins(message)
+            return await notifyAdmins(message)
         }
     }
 
@@ -177,16 +183,20 @@ public struct Notifier: Sendable {
     ///
     /// **여기에는 끄는 자리가 없다.** 스토어가 멈추는 알림이라 받지 않겠다고 할 수
     /// 있는 성질이 아니다. 앱 알림은 소음이 될 수 있어 갈래마다 끄는 칸을 뒀다.
-    private func notifyAdmins(_ message: NotificationMessage) async {
+    private func notifyAdmins(_ message: NotificationMessage) async -> Bool {
         let admins = (try? await User.query(on: database)
             .filter(\.$role == .admin)
             // 탈퇴 처리된 계정은 빼고 센다 (ADR-0061). 안 그러면 "당신 계정을 탈퇴 처리했습니다"
             // 를 당사자가 받는다.
             .filter(\.$deactivatedAt == nil)
             .all()) ?? []
+        var delivered = false
         for admin in admins {
-            await notify(person: admin, message: message)
+            if await notify(person: admin, message: message) {
+                delivered = true
+            }
         }
+        return delivered
     }
 
     /// 이 앱을 올릴 수 있는 사람들. 소유자와 멤버다.
@@ -315,7 +325,9 @@ public struct Notifier: Sendable {
         return NotificationChannelKind.personal.lazy.compactMap { channels[$0] }.prefix(1).map { $0 }
     }
 
-    private func deliver(_ message: NotificationMessage, to targets: [NotificationTarget]) async {
+    @discardableResult
+    private func deliver(_ message: NotificationMessage, to targets: [NotificationTarget]) async -> Bool {
+        var delivered = false
         for target in targets {
             guard let channel = channels[target.kind] else {
                 logger.warning("보낼 방법을 모르는 알림 대상 [\(target.kindName)]")
@@ -326,6 +338,7 @@ public struct Notifier: Sendable {
                 try await channel.send(message, to: target.endpoint)
                 target.lastSentAt = Date()
                 target.lastError = nil
+                delivered = true
             } catch {
                 // 아무도 안 받고 있는데 잘 되는 줄 아는 상태를 만들지 않는다.
                 let reason = String(describing: error)
@@ -334,6 +347,7 @@ public struct Notifier: Sendable {
             }
             try? await target.save(on: database)
         }
+        return delivered
     }
 }
 
