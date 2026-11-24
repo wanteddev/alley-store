@@ -85,8 +85,18 @@ public enum Entitlements {
 
         let disallowed = profile.disallowedKeys(declared: declared)
         guard disallowed.isEmpty else {
+            // 키 이름만으로는 무엇을 고칠지 모른다. Apple 쪽에서 컨테이너를 연결하면
+            // 풀리는지, 앱이 다른 팀의 값을 적었는지는 값을 봐야 가릴 수 있다.
+            let details = disallowed.map { key -> String in
+                guard let granted = profile.entitlementValues[key] else {
+                    return "\(key): 프로필에 없음"
+                }
+                let requested = (declared[key] ?? nil)?.joined(separator: ", ") ?? "(값 없음)"
+                let allowed = granted.isEmpty ? "없음" : granted.joined(separator: ", ")
+                return "\(key): \(requested) (프로필 허용: \(allowed))"
+            }
             throw ValidationError.profileDoesNotAllow(
-                bundle: name, keys: restricted, disallowed: disallowed
+                bundle: name, keys: restricted, disallowed: disallowed, details: details
             )
         }
     }
@@ -94,7 +104,10 @@ public enum Entitlements {
     public enum ValidationError: Error, CustomStringConvertible {
         case missingProfile(bundle: String, keys: [String])
         /// `keys` 는 서명에 필요한 전체, `disallowed` 는 그중 프로필이 허용하지 않는 것.
-        case profileDoesNotAllow(bundle: String, keys: [String], disallowed: [String])
+        /// `details` 는 `disallowed` 마다 선언한 값과 프로필이 허용하는 값을 적은 줄.
+        case profileDoesNotAllow(
+            bundle: String, keys: [String], disallowed: [String], details: [String]
+        )
         case unreadableProfile(bundle: String, keys: [String])
         case unsupportedForDeveloperID(bundle: String, keys: [String])
 
@@ -105,7 +118,7 @@ public enum Entitlements {
         public var profileKeys: [String]? {
             switch self {
             case .missingProfile(_, let keys),
-                 .profileDoesNotAllow(_, let keys, _),
+                 .profileDoesNotAllow(_, let keys, _, _),
                  .unreadableProfile(_, let keys):
                 return keys
             case .unsupportedForDeveloperID:
@@ -125,12 +138,14 @@ public enum Entitlements {
                     \(bundle) 은 프로비저닝 프로필이 필요한 권한을 쓰는데 프로필이 들어 있지 \
                     않습니다: \(keys.joined(separator: ", ")).
                     """
-            case .profileDoesNotAllow(let bundle, _, let disallowed):
+            case .profileDoesNotAllow(let bundle, _, let disallowed, let details):
+                // 한 줄로 둔다. 화면의 실패 사유는 첫 줄만 보여 준다.
+                let listed = (details.isEmpty ? disallowed : details).joined(separator: "; ")
                 return """
                     \(bundle) 에 든 프로비저닝 프로필이 이 권한을 허용하지 않습니다: \
-                    \(disallowed.joined(separator: ", ")). 키가 없거나, iCloud 컨테이너처럼 \
-                    값이 프로필에 연결되지 않았습니다. 이대로 서명하면 공증은 통과하지만 \
-                    실행할 때 macOS 가 앱을 멈춥니다.
+                    \(listed). 키가 없거나, iCloud 컨테이너처럼 값이 프로필에 연결되지 \
+                    않았습니다. 이대로 서명하면 공증은 통과하지만 실행할 때 macOS 가 앱을 \
+                    멈춥니다.
                     """
             case .unreadableProfile(let bundle, let keys):
                 return """
@@ -153,13 +168,33 @@ public enum Entitlements {
     ///
     /// **서명보다 먼저 해야 한다.** 프로필은 번들의 리소스라 봉인에 들어간다. 서명한
     /// 뒤에 넣으면 봉인이 깨진다.
+    ///
+    /// 번들과 `Contents` 가 심볼릭 링크면 쓰지 않는다. 올린 zip 은 링크를 그대로 풀어
+    /// 놓으므로, 링크를 따라가면 작업 디렉터리 밖의 파일을 지우거나 덮어쓴다.
     @discardableResult
     public static func installProfile(_ data: Data, into bundle: URL) throws -> Bool {
+        for url in [bundle, bundle.appendingPathComponent("Contents")] {
+            let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey])
+            if values?.isSymbolicLink == true {
+                throw InstallError.symbolicLink(path: url.lastPathComponent)
+            }
+        }
         let location = profileLocation(in: bundle)
         let replaced = FileManager.default.fileExists(atPath: location.path)
         if replaced { try FileManager.default.removeItem(at: location) }
         try data.write(to: location)
         return replaced
+    }
+
+    public enum InstallError: Error, CustomStringConvertible {
+        case symbolicLink(path: String)
+
+        public var description: String {
+            switch self {
+            case .symbolicLink(let path):
+                return "\(path) 가 심볼릭 링크라 프로필을 넣지 않았습니다. 번들 밖의 파일을 건드릴 수 있습니다."
+            }
+        }
     }
 
     /// 프로필을 쓰는 앱이 서명에 실어야 하는 신원 두 줄을 프로필 값으로 맞춘다.

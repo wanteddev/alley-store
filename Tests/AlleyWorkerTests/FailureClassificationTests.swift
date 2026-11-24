@@ -22,13 +22,27 @@ struct FailureClassificationTests {
         let keys = ["com.apple.developer.icloud-services"]
         let errors: [Entitlements.ValidationError] = [
             .missingProfile(bundle: "도구.app", keys: keys),
-            .profileDoesNotAllow(bundle: "도구.app", keys: keys, disallowed: keys),
+            .profileDoesNotAllow(bundle: "도구.app", keys: keys, disallowed: keys, details: []),
             .unreadableProfile(bundle: "도구.app", keys: keys),
         ]
         for error in errors {
             #expect(SigningFailureCode.classify(error) == .provisioningProfileRequired)
             #expect(error.profileKeys == keys)
         }
+    }
+
+    /// 번들 ID 가 임시값인 앱의 프로필 실패는 번들 ID 를 싣느라 한 겹 싸인다. 갈래는
+    /// 그대로여야 한다.
+    @Test("번들 ID 를 실은 프로필 실패도 프로필 갈래다")
+    func blockedProfileKeepsItsCode() {
+        let error = SigningPipeline.ProfileBlocked(
+            validation: .missingProfile(
+                bundle: "도구.app", keys: ["com.apple.developer.icloud-services"]
+            ),
+            bundleIdentifier: "com.example.tool"
+        )
+        #expect(SigningFailureCode.classify(error) == .provisioningProfileRequired)
+        #expect(error.description == error.validation.description)
     }
 
     @Test("Developer ID 로 못 쓰는 권한은 entitlements 갈래다")

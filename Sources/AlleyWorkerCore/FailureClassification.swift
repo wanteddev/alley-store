@@ -23,6 +23,9 @@ extension SigningFailureCode {
             // Developer ID 로 못 쓰는 권한이면 entitlements 갈래(고칠 것은 앱)다.
             return validation.failureCode
 
+        case let blocked as SigningPipeline.ProfileBlocked:
+            return blocked.validation.failureCode
+
         case is AppBundle.BundleError:
             // zip 안에 `.app` 이 없거나 여러 개다.
             return .bundleLayoutInvalid

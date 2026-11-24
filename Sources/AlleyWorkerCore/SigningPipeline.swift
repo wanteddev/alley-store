@@ -33,6 +33,18 @@ public struct SigningPipeline: Sendable {
         public var iconSize: Int64?
     }
 
+    /// 번들 ID 가 임시값인 앱이 프로필 때문에 멈췄다 (ADR-0084).
+    ///
+    /// 임시 번들 ID 는 서명이 끝나야 확정되고, 프로필은 확정된 번들 ID 가 있어야
+    /// 발급된다. 실패에 번들 ID 를 싣지 않으면 첫 서명은 프로필을, 프로필은 첫 서명을
+    /// 기다리며 둘 다 움직이지 않는다.
+    public struct ProfileBlocked: Error, CustomStringConvertible {
+        public let validation: Entitlements.ValidationError
+        public let bundleIdentifier: String
+
+        public var description: String { validation.description }
+    }
+
     public enum PipelineError: Error, CustomStringConvertible {
         /// 외부 명령이 실패했다.
         ///
@@ -111,7 +123,16 @@ public struct SigningPipeline: Sendable {
             let targets = try bundle.codeToSign()
             // 업로더가 준 plist 가 있으면 그것이 진실이다 (ADR-0020).
             let provided = job.entitlements.map { Data($0.utf8) }
-            let declaredKeys = try await validate(bundle: bundle, provided: provided)
+            let declaredKeys: [String]
+            do {
+                declaredKeys = try await validate(bundle: bundle, provided: provided)
+            } catch let validation as Entitlements.ValidationError
+                where validation.profileKeys != nil && job.appBundleIDPending == true {
+                // 번들 ID 가 임시값인 앱이 프로필 때문에 멈췄다. 읽어 둔 번들 ID 를 실어
+                // 보내 서버가 확정하게 한다. 그래야 프로필을 발급할 수 있다.
+                guard let identifier = bundle.bundleIdentifier else { throw validation }
+                throw ProfileBlocked(validation: validation, bundleIdentifier: identifier)
+            }
 
             var codesigningDetail = "서명 대상 \(targets.count)개"
             if declaredKeys.isEmpty {
@@ -714,7 +735,8 @@ public struct SigningPipeline: Sendable {
     /// - 바깥 `.app` 의 신원(`com.apple.application-identifier` 등)을 프로필 값으로
     ///   맞춘다. 없거나 다르면 macOS 가 프로필이 이 앱 것인지 확인하지 못한다
     /// - 안쪽 헬퍼 `.app` 에 업로더 plist 를 붙일 때, 헬퍼에 자기 프로필이 없으면
-    ///   프로필이 있어야 하는 권한을 뺀다. 그대로 두면 헬퍼가 뜨자마자 죽는다
+    ///   프로필이 있어야 하는 권한을 뺀다. 그대로 두면 헬퍼가 뜨자마자 죽는다.
+    ///   자기 프로필이 있으면 신원을 그 프로필 값으로 맞춘다
     private func entitlementsFile(
         for target: URL,
         of bundle: AppBundle,
@@ -736,9 +758,16 @@ public struct SigningPipeline: Sendable {
                 if let profile = try? Entitlements.embeddedProfile(in: bundle.url) {
                     data = Entitlements.applyingProfileIdentity(to: data, from: profile)
                 }
-            } else if provided != nil, target.pathExtension == "app",
-                      !Entitlements.hasProvisioningProfile(in: target) {
-                data = Entitlements.removingProfileRequired(from: data)
+            } else if provided != nil, target.pathExtension == "app" {
+                if Entitlements.hasProvisioningProfile(in: target) {
+                    // 헬퍼가 자기 프로필을 가졌으면 신원은 그 프로필이 정한다. 업로더
+                    // plist 는 바깥 앱 기준이라 그대로 두면 헬퍼가 남의 신원으로 서명된다.
+                    if let profile = try? Entitlements.embeddedProfile(in: target) {
+                        data = Entitlements.applyingProfileIdentity(to: data, from: profile)
+                    }
+                } else {
+                    data = Entitlements.removingProfileRequired(from: data)
+                }
             }
         }
 

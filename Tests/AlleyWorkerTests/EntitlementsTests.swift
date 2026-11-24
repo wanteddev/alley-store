@@ -100,11 +100,12 @@ struct EntitlementsTests {
             )
             Issue.record("막혀야 한다")
         } catch let error as Entitlements.ValidationError {
-            guard case .profileDoesNotAllow(_, let keys, let disallowed) = error else {
+            guard case .profileDoesNotAllow(_, let keys, let disallowed, let details) = error else {
                 Issue.record("프로필 불일치로 막아야 한다: \(error)")
                 return
             }
             #expect(disallowed == ["com.apple.developer.aps-environment"])
+            #expect(details == ["com.apple.developer.aps-environment: 프로필에 없음"])
             // 서버에는 모자란 것만이 아니라 전체를 보낸다.
             #expect(keys == ["com.apple.developer.aps-environment", "com.apple.developer.icloud-services"])
             #expect(error.failureCode == .provisioningProfileRequired)
@@ -170,6 +171,24 @@ struct EntitlementsTests {
 
         #expect(replaced)
         #expect(try Data(contentsOf: Entitlements.profileLocation(in: app)) == store)
+    }
+
+    /// 올린 zip 은 링크를 그대로 풀어 놓는다. 따라가면 작업 디렉터리 밖을 덮어쓴다.
+    @Test("Contents 가 심볼릭 링크면 프로필을 쓰지 않는다")
+    func installRefusesSymbolicLinks() throws {
+        let fixture = try BundleFixture()
+        let outside = try fixture.makeDirectory("바깥")
+        let app = try fixture.makeDirectory("도구.app")
+        try FileManager.default.createSymbolicLink(
+            at: app.appendingPathComponent("Contents"), withDestinationURL: outside
+        )
+
+        #expect(throws: Entitlements.InstallError.self) {
+            try Entitlements.installProfile(FakeProfile.make(allowing: []), into: app)
+        }
+        #expect(!FileManager.default.fileExists(
+            atPath: outside.appendingPathComponent("embedded.provisionprofile").path
+        ))
     }
 
     @Test("번들에 프로필이 없으면 새로 넣는다")
@@ -265,11 +284,18 @@ struct EntitlementsTests {
             Issue.record("막혀야 한다")
         } catch let error as Entitlements.ValidationError {
             // 키체인 그룹은 와일드카드로 허용된다. 걸리는 것은 컨테이너뿐이다.
-            guard case .profileDoesNotAllow(_, let keys, let disallowed) = error else {
+            guard case .profileDoesNotAllow(_, let keys, let disallowed, let details) = error else {
                 Issue.record("프로필 불일치로 막아야 한다: \(error)")
                 return
             }
             #expect(disallowed == ["com.apple.developer.icloud-container-identifiers"])
+            // 무엇을 고칠지는 값을 봐야 안다. 선언한 값과 프로필이 허용하는 값을 함께 적고,
+            // 화면은 실패 사유의 첫 줄만 보이므로 한 줄에 둔다.
+            #expect(details == [
+                "com.apple.developer.icloud-container-identifiers: iCloud.com.example.tool (프로필 허용: 없음)"
+            ])
+            #expect(error.description.contains("iCloud.com.example.tool (프로필 허용: 없음)"))
+            #expect(!error.description.contains("\n"))
             // 서버에는 전체를 보낸다. 새 프로필이 나머지를 빠뜨리지 않게 한다.
             #expect(keys.count == 2)
         }
