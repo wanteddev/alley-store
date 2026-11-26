@@ -93,6 +93,7 @@
 | [0083](0083-signing-attempts-split-current-and-history.md) | 서명 시도를 현재와 지난 시도로 나눠 보여준다 | 수락됨 | 2026-11-05 |
 | [0084](0084-watch-expiry-in-stages-and-ask-for-the-membership-date.md) | 만료는 단계마다 한 번 알리고, 멤버십 만료일은 관리자가 적는다 | 수락됨 | 2026-11-23 |
 | [0085](0085-store-issues-provisioning-profiles.md) | 프로비저닝 프로필은 스토어가 발급해 보관하고, 워커가 서명 직전에 넣는다 | 수락됨 | 2026-11-23 |
+| [0086](0086-split-downloads-into-installs-and-updates-by-person.md) | 받아간 기록은 서버가 사람 기준으로 신규 설치와 업데이트로 갈라, 받을 때 적는다 | 수락됨 | 2026-11-26 |
 
 ## 언제 쓰나
 
