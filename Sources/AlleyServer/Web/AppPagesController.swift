@@ -67,7 +67,7 @@ struct AppPagesController: RouteCollection, Sendable {
             ofApps: apps.map { try $0.requireID() },
             on: request.db
         )
-        // 다운로드 많은 순으로 늘어놓을 때 쓴다. 스토어 앱 목록(API)과 같은 값이어야 두 곳의
+        // 많이 설치한 순으로 늘어놓을 때 쓴다. 스토어 앱 목록(API)과 같은 값이어야 두 곳의
         // 순서가 같다. 앱마다 세면 N+1 이라 한 번에 모은다.
         let downloads = try await DownloadStats.totals(
             ofApps: apps.map { try $0.requireID() },
@@ -106,7 +106,7 @@ struct AppPagesController: RouteCollection, Sendable {
                 try app.toDTO(
                     latestReleased: latest[appID],
                     rating: ratings[appID],
-                    downloadCount: downloads[appID] ?? 0
+                    downloads: downloads[appID] ?? DownloadStats.Counts()
                 )
             )
         }
@@ -517,17 +517,12 @@ struct AppPagesController: RouteCollection, Sendable {
 
         // 올릴 권한이 있는 사람에게만 보여준다. 받는 사람에게는 쓸 데가 없는 숫자다.
         var downloads: DownloadSummaryRow?
-        var perVersion: [UUID: Int] = [:]
+        var perVersion: [UUID: DownloadStats.Counts] = [:]
         if canUpload {
             let summary = try await DownloadStats.summary(
                 ofApp: try app.requireID(), on: request.db
             )
-            downloads = DownloadSummaryRow(
-                total: summary.total,
-                recent: summary.recent,
-                people: summary.people,
-                recentDays: DownloadStats.recentDays
-            )
+            downloads = DownloadSummaryRow(summary)
             perVersion = try await DownloadStats.perVersion(
                 ofApp: try app.requireID(), on: request.db
             )
@@ -577,7 +572,7 @@ struct AppPagesController: RouteCollection, Sendable {
                     var row = try VersionRow(
                         version: version,
                         attempts: attemptsByVersion[try version.requireID()] ?? [],
-                        downloadCount: perVersion[try version.requireID()],
+                        downloads: perVersion[try version.requireID()],
                         // 스토어 앱은 출시된 것만. 스토어 앱이 없는 사람에게 이것이
                         // 유일한 길이라 출시 전 것까지 열 이유가 없다.
                         isDownloadable: canUpload
@@ -680,10 +675,7 @@ struct AppPagesController: RouteCollection, Sendable {
         }
 
         // URL 을 내주기 전에 남긴다. 나중에 남기면 URL 만 받고 이력이 빠지는 경로가 생긴다.
-        try await Download(
-            userID: try user.requireID(),
-            versionID: try version.requireID()
-        ).save(on: request.db)
+        try await Download.record(userID: try user.requireID(), version: version, on: request.db)
 
         let presigned = try await request.artifactStorage.downloadURL(key: artifact.storageKey)
         request.logger.notice(
@@ -1514,8 +1506,9 @@ struct VersionRow: Encodable {
     /// 지난 시도들. 최근 것이 위로 온다. 현재 시도는 위 칸이 그리고, 지난 시도는
     /// 접어서 "N번째 시도" 로 골라 본다 (이슈 #85). 재시도가 없었으면 비어 있다.
     var pastAttempts: [SigningAttemptView]
-    /// 이 버전을 받아간 횟수. 셀 수 없으면 nil.
-    var downloadCount: Int?
+    /// 이 버전을 받아간 횟수. 신규 설치와 업데이트를 나눠 둔다 (ADR-0086).
+    /// 받아간 사람이 없거나 셀 수 없으면 nil 이고 화면에 "—" 가 나온다.
+    var downloads: DownloadCountsRow?
     /// 무엇으로 서명했는지. 업로더가 준 entitlements 의 키를 한 줄씩 늘어놓는다.
     ///
     /// 비밀이 아니다. 앱이 실행되자마자 죽을 때 "권한이 붙긴 했나"를 화면에서 바로
@@ -1536,7 +1529,7 @@ struct VersionRow: Encodable {
     init(
         version: Version,
         attempts: [SigningJob.AttemptReport] = [],
-        downloadCount: Int? = nil,
+        downloads: DownloadStats.Counts? = nil,
         isDownloadable: Bool = false,
         canAnnounce: Bool = false
     ) throws {
@@ -1569,7 +1562,7 @@ struct VersionRow: Encodable {
         self.needsEntitlements = showsFailure && currentCode == .entitlementsRejected
         self.needsProfile = showsFailure && currentCode == .provisioningProfileRequired
         self.pastAttempts = past
-        self.downloadCount = downloadCount
+        self.downloads = downloads.flatMap { $0.total > 0 ? DownloadCountsRow($0) : nil }
 
         let keys = version.entitlements.map(EntitlementsPlist.keys(of:)) ?? []
         self.entitlementKeys = keys.isEmpty ? nil : keys.joined(separator: "\n")
@@ -1934,12 +1927,34 @@ struct DeployTokenRow: Encodable {
     }
 }
 
-/// 앱 하나의 다운로드 요약.
+/// 앱 하나의 다운로드 요약. 신규 설치와 업데이트를 나눠 보여준다 (ADR-0086).
+///
+/// "받아간 사람" 은 싣지 않는다. 신규 설치는 사람마다 한 번뿐이라 같은 수다.
 struct DownloadSummaryRow: Encodable {
-    var total: Int
-    var recent: Int
-    var people: Int
+    var installs: Int
+    var updates: Int
+    var recentInstalls: Int
+    var recentUpdates: Int
     var recentDays: Int
+
+    init(_ summary: DownloadStats.AppSummary) {
+        installs = summary.all.installs
+        updates = summary.all.updates
+        recentInstalls = summary.recent.installs
+        recentUpdates = summary.recent.updates
+        recentDays = DownloadStats.recentDays
+    }
+}
+
+/// 신규 설치와 업데이트 수 한 쌍.
+struct DownloadCountsRow: Encodable {
+    var installs: Int
+    var updates: Int
+
+    init(_ counts: DownloadStats.Counts) {
+        installs = counts.installs
+        updates = counts.updates
+    }
 }
 
 /// 방금 발급한 피드 주소. 토큰이 그 안에 들어 있다.

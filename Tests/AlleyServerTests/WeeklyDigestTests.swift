@@ -77,7 +77,7 @@ struct WeeklyDigestTests {
     func quietWeek() {
         let messages = WeeklyDigest.compose(
             .init(cadence: .weekly, storeName: "Alley Store", periodLabel: "10월 5일 ~ 10월 11일",
-                  downloads: 0, previousDownloads: 3, people: 0, previousPeople: 2)
+                  installs: 0, previousInstalls: 1, updates: 0, previousUpdates: 2, people: 0, previousPeople: 2)
         )
         #expect(messages.newsletter.title == "📰 Alley Store 주간 소식 (10월 5일 ~ 10월 11일)")
         #expect(messages.newsletter.body == "조용한 한 주였습니다. 새로 나온 앱도 받아간 사람도 없었습니다.")
@@ -88,7 +88,7 @@ struct WeeklyDigestTests {
     func newsletterSections() throws {
         var report = WeeklyDigest.Report(
             cadence: .weekly, storeName: "Alley Store", periodLabel: "10월 5일 ~ 10월 11일",
-            downloads: 128, previousDownloads: 96, people: 54, previousPeople: 57
+            installs: 12, previousInstalls: 9, updates: 116, previousUpdates: 87, people: 54, previousPeople: 57
         )
         report.newApps = [.init(app: ref("클립보드"), version: "1.0", summary: "기록을 관리합니다")]
         report.updatedApps = [.init(app: ref("메모장"), version: "1.4", summary: nil)]
@@ -99,11 +99,11 @@ struct WeeklyDigestTests {
         report.newcomers = [.init(name: "홍길동", app: ref("클립보드"))]
 
         let body = NotificationMarkup.mrkdwn(try #require(WeeklyDigest.compose(report).newsletter.body))
-        #expect(body.contains("*📊 이번 주 숫자*\n다운로드 128회 ▲32 · 받아간 사람 54명 ▼3"))
+        #expect(body.contains("*📊 이번 주 숫자*\n신규 설치 12회 ▲3 · 업데이트 116회 ▲29 · 받아간 사람 54명 ▼3"))
         #expect(body.contains("*🎉 새로 나온 앱*\n• <https://store.example.com/a/클립보드|클립보드> 1.0 - 기록을 관리합니다"))
         #expect(body.contains("*✨ 업데이트된 앱*\n• <https://store.example.com/a/메모장|메모장> 1.4"))
-        #expect(body.contains("1. <https://store.example.com/a/클립보드|클립보드> 42회"))
-        #expect(body.contains("31회 (지난주 9회의 3배)"))
+        #expect(body.contains("*🔥 새로 많이 설치한 앱*\n1. <https://store.example.com/a/클립보드|클립보드> 42회"))
+        #expect(body.contains("*📈 신규 설치가 갑자기 늘어난 앱*\n• <https://store.example.com/a/메모장|메모장> 31회 (지난주 9회의 3배)"))
         #expect(body.contains("새 피드백 12건 · 별점이 높은 앱: <https://store.example.com/a/클립보드|클립보드> ★4.8 (9명)"))
         #expect(body.contains("• 홍길동 - <https://store.example.com/a/클립보드|클립보드>"))
     }
@@ -113,7 +113,7 @@ struct WeeklyDigestTests {
     func operationsMessage() throws {
         var report = WeeklyDigest.Report(
             cadence: .weekly, storeName: "Alley Store", periodLabel: "10월 5일 ~ 10월 11일",
-            downloads: 1, previousDownloads: 1, people: 1, previousPeople: 1
+            installs: 1, previousInstalls: 1, updates: 0, previousUpdates: 0, people: 1, previousPeople: 1
         )
         report.failureCount = 5
         report.failuresByReason = [.init(reason: "entitlements 문제", count: 3), .init(reason: "공증 거절", count: 2)]
@@ -135,7 +135,7 @@ struct WeeklyDigestTests {
     func monthlyWording() throws {
         var quiet = WeeklyDigest.Report(
             cadence: .monthly, storeName: "Alley Store", periodLabel: "9월",
-            downloads: 0, previousDownloads: 0, people: 0, previousPeople: 0
+            installs: 0, previousInstalls: 0, updates: 0, previousUpdates: 0, people: 0, previousPeople: 0
         )
         let quietMessages = WeeklyDigest.compose(quiet)
         #expect(quietMessages.newsletter.title == "📰 Alley Store 월간 소식 (9월)")
@@ -143,13 +143,13 @@ struct WeeklyDigestTests {
 
         var report = WeeklyDigest.Report(
             cadence: .monthly, storeName: "Alley Store", periodLabel: "9월",
-            downloads: 120, previousDownloads: 90, people: 40, previousPeople: 42
+            installs: 20, previousInstalls: 15, updates: 100, previousUpdates: 75, people: 40, previousPeople: 42
         )
         report.surging = [.init(app: ref("메모장"), count: 60, previous: 20)]
         report.idle = [.init(app: ref("계산기"), reason: "90일 넘게 새 버전이 없습니다")]
         let messages = WeeklyDigest.compose(report)
         let body = NotificationMarkup.mrkdwn(try #require(messages.newsletter.body))
-        #expect(body.contains("*📊 이번 달 숫자*\n다운로드 120회 ▲30 · 받아간 사람 40명 ▼2"))
+        #expect(body.contains("*📊 이번 달 숫자*\n신규 설치 20회 ▲5 · 업데이트 100회 ▲25 · 받아간 사람 40명 ▼2"))
         #expect(body.contains("60회 (지난달 20회의 3배)"))
         #expect(messages.operations?.title == "🛠 Alley Store 월간 운영 지표 (9월)")
     }
@@ -169,7 +169,8 @@ struct WeeklyDigestTests {
         var appID: UUID
     }
 
-    /// 지난주(10월 5일~11일)에 처음 나온 앱 하나와 다운로드 셋.
+    /// 지난주(10월 5일~11일)에 처음 나온 앱 하나와 다운로드 셋. 한 사람이 세 번 받아서
+    /// 신규 설치 하나와 업데이트 둘이다.
     private func seed(on app: Application) async throws -> Fixture {
         let (admin, _) = try await app.makeUser(email: "admin@example.com", role: .admin)
         let (developer, _) = try await app.makeUser(email: "dev@example.com", role: .developer, name: "홍길동")
@@ -181,8 +182,7 @@ struct WeeklyDigestTests {
 
         let sql = try #require(app.db as? any SQLDatabase)
         for _ in 0..<3 {
-            let download = Download(userID: try admin.requireID(), versionID: try version.requireID())
-            try await download.save(on: app.db)
+            let download = try await Download.record(userID: try admin.requireID(), version: version, on: app.db)
             try await sql.raw(
                 "UPDATE downloads SET created_at = \(bind: Self.at(2026, 10, 7, 12)) WHERE id = \(bind: try download.requireID())"
             ).run()
@@ -206,7 +206,7 @@ struct WeeklyDigestTests {
             let message = try #require(dm.messages.first)
             #expect(message.title.contains("주간 소식 (10월 5일 ~ 10월 11일)"))
             let body = NotificationMarkup.plain(try #require(message.body))
-            #expect(body.contains("다운로드 3회 ▲3 · 받아간 사람 1명 ▲1"))
+            #expect(body.contains("신규 설치 1회 ▲1 · 업데이트 2회 ▲2 · 받아간 사람 1명 ▲1"))
             #expect(body.contains("🎉 새로 나온 앱"))
             #expect(body.contains("👋 처음 앱을 낸 개발자\n• 홍길동 - 클립보드"))
         }
@@ -248,7 +248,7 @@ struct WeeklyDigestTests {
             let message = try #require(dm.messages.first)
             #expect(message.title == "📰 Alley Store 월간 소식 (10월)")
             let body = NotificationMarkup.plain(try #require(message.body))
-            #expect(body.contains("다운로드 3회 ▲3 · 받아간 사람 1명 ▲1"))
+            #expect(body.contains("신규 설치 1회 ▲1 · 업데이트 2회 ▲2 · 받아간 사람 1명 ▲1"))
             #expect(body.contains("👋 처음 앱을 낸 개발자\n• 홍길동 - 클립보드"))
         }
     }
@@ -340,6 +340,37 @@ struct WeeklyDigestTests {
         }
     }
 
+    /// 업데이트까지 세면 자동 업데이트가 켜진 앱이 버전을 낼 때마다 순위에 오른다 (ADR-0086).
+    @Test("많이 설치한 앱과 갑자기 늘어난 앱은 신규 설치로 고른다")
+    func ranksByInstalls() async throws {
+        try await withMigratedApp { app in
+            let fixture = try await seed(on: app)
+            let other = try await app.seedApp(bundleID: "com.example.memo", name: "메모장", owner: fixture.developer)
+            let memo = try await app.seedVersion(
+                appID: try other.requireID(), short: "1.0", build: 1, state: .released, by: fixture.developer
+            )
+            // 메모장은 두 사람이 새로 받았다. 클립보드는 한 사람이 세 번 받았다(신규 설치 하나).
+            let sql = try #require(app.db as? any SQLDatabase)
+            for index in 0..<2 {
+                let (person, _) = try await app.makeUser(email: "reader\(index)@example.com", role: .user)
+                let download = try await Download.record(userID: try person.requireID(), version: memo, on: app.db)
+                try await sql.raw(
+                    "UPDATE downloads SET created_at = \(bind: Self.at(2026, 10, 8, 12)) WHERE id = \(bind: try download.requireID())"
+                ).run()
+            }
+
+            let week = try #require(WeeklyDigest.dueWeek(at: Self.at(2026, 10, 12, 10, 30), in: Self.seoul))
+            let report = try await WeeklyDigest.gather(
+                week, now: Self.at(2026, 10, 12, 10, 30), on: app.db, baseURL: "https://store.example.com"
+            )
+            #expect(report.installs == 3)
+            #expect(report.updates == 2)
+            #expect(report.people == 3)
+            #expect(report.top.map(\.app.name) == ["메모장", "클립보드"])
+            #expect(report.top.map(\.count) == [2, 1])
+        }
+    }
+
     @Test("Slack 에서는 사람이 쓴 글의 꺾쇠를 바꿔 가짜 링크를 막는다")
     func escapesUserTextForSlack() {
         let body = "소개: <https://evil.example.com|콘솔에서 확인> & "
@@ -357,7 +388,7 @@ struct WeeklyDigestTests {
     func stripsMarkersFromUserText() throws {
         var report = WeeklyDigest.Report(
             cadence: .weekly, storeName: "Alley Store", periodLabel: "10월 5일 ~ 10월 11일",
-            downloads: 1, previousDownloads: 0, people: 1, previousPeople: 0
+            installs: 1, previousInstalls: 0, updates: 0, previousUpdates: 0, people: 1, previousPeople: 0
         )
         report.newApps = [.init(
             app: ref("클립보드"), version: "1.0",

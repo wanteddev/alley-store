@@ -11,7 +11,8 @@ struct CatalogSortTests {
         rating: (average: Double, count: Int)? = nil,
         registeredDaysAgo: Double = 0,
         releasedDaysAgo: Double? = nil,
-        downloads: Int? = nil
+        downloads: Int? = nil,
+        installs: Int? = nil
     ) -> AppDTO {
         let id = UUID()
         let version = releasedDaysAgo.map { days in
@@ -24,6 +25,7 @@ struct CatalogSortTests {
         return AppDTO(
             id: id, bundleID: "com.example.\(name)", name: name, ownerID: UUID(),
             downloadCount: downloads,
+            installCount: installs,
             latestReleasedVersion: version,
             rating: rating.map { RatingSummary(count: $0.count, average: $0.average) },
             createdAt: base.addingTimeInterval(-registeredDaysAgo * 86_400),
@@ -63,7 +65,7 @@ struct CatalogSortTests {
         #expect(names(.reviewCount, apps) == ["많음", "적음", "빈 요약", "없음"])
     }
 
-    @Test("다운로드 많은 순은 횟수로, 모르는 앱만 맨 뒤")
+    @Test("많이 설치한 순은 예전 서버면 받아간 횟수로, 모르는 앱만 맨 뒤")
     func byDownloads() {
         let apps = [
             app("모름"),
@@ -74,6 +76,18 @@ struct CatalogSortTests {
         // 0 은 "받아간 사람이 없다" 는 값이라 모르는 앱보다 앞이다.
         #expect(names(.downloads, apps) == ["많음", "적음", "없음", "모름"])
         #expect(names(.downloads, [app("다", downloads: 5), app("가", downloads: 5)]) == ["가", "다"])
+    }
+
+    /// 업데이트까지 센 횟수로 늘어놓으면 자동 업데이트가 켜진 앱이 버전을 낼 때마다 위로
+    /// 올라온다 (ADR-0086).
+    @Test("많이 설치한 순은 신규 설치로 늘어놓는다")
+    func byInstalls() {
+        let apps = [
+            app("자주 업데이트", downloads: 300, installs: 10),
+            app("새로 많이 받음", downloads: 40, installs: 35),
+        ]
+        #expect(names(.downloads, apps) == ["새로 많이 받음", "자주 업데이트"])
+        #expect(CatalogSort.downloads.title == "많이 설치한 순")
     }
 
     @Test("최신 등록순과 최근 업데이트순은 서로 다른 시각을 본다")

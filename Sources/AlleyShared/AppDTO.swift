@@ -87,7 +87,17 @@ public struct AppDTO: Codable, Sendable, Identifiable, Equatable {
     ///
     /// "설치 수" 가 아니다. 서버가 아는 것은 받아갔다는 사실까지다 (`DownloadStats`).
     /// 이 값을 모르는 예전 서버에서는 nil 이다.
+    ///
+    /// 업데이트까지 모두 센 값이라 앱이 얼마나 퍼졌는지를 보려면 `installCount` 를 쓴다.
+    /// 예전 스토어 앱이 읽는 칸이라 뜻을 바꾸지 않고 그대로 둔다 (ADR-0086).
     public var downloadCount: Int?
+    /// 지금까지 이 앱을 처음 받은 횟수. 같은 사람이 그 앱을 처음 받은 것만 센다 (ADR-0086).
+    ///
+    /// 서버가 설치를 본 것은 아니다. 받아간 기록을 사람으로 가른 값이다. 이 값을 모르는
+    /// 예전 서버에서는 nil 이다.
+    public var installCount: Int?
+    /// 지금까지 같은 사람이 같은 앱을 다시 받은 횟수. 예전 서버에서는 nil 이다.
+    public var updateCount: Int?
     /// 현재 조직에 출시된 최신 버전. 아직 출시본이 없으면 nil.
     public var latestReleasedVersion: VersionDTO?
     /// 별점 요약. 목록에서도 보여주므로 앱과 함께 내려준다.
@@ -130,6 +140,8 @@ public struct AppDTO: Codable, Sendable, Identifiable, Equatable {
         ownerID: UUID,
         developerNames: [String]? = nil,
         downloadCount: Int? = nil,
+        installCount: Int? = nil,
+        updateCount: Int? = nil,
         latestReleasedVersion: VersionDTO? = nil,
         rating: RatingSummary? = nil,
         isStoreApp: Bool? = nil,
@@ -151,6 +163,8 @@ public struct AppDTO: Codable, Sendable, Identifiable, Equatable {
         self.ownerID = ownerID
         self.developerNames = developerNames
         self.downloadCount = downloadCount
+        self.installCount = installCount
+        self.updateCount = updateCount
         self.latestReleasedVersion = latestReleasedVersion
         self.rating = rating
         self.isStoreApp = isStoreApp

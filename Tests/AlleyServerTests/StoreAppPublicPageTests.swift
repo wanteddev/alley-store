@@ -71,6 +71,8 @@ struct StoreAppPublicPageTests {
             let downloads = try await Download.query(on: app.db).all()
             #expect(downloads.count == 1)
             #expect(downloads.first?.$user.id == nil)
+            // 받은 사람을 모르면 신규 설치로 센다 (ADR-0086).
+            #expect(downloads.first?.kind == .install)
         }
     }
 
@@ -89,6 +91,47 @@ struct StoreAppPublicPageTests {
             let downloads = try await Download.query(on: app.db).all()
             #expect(downloads.count == 1)
             #expect(downloads.first?.$user.id == (try user.requireID()))
+            #expect(downloads.first?.kind == .install)
+        }
+    }
+
+    /// 받는 자리가 달라도 같은 규칙으로 가른다 (ADR-0086). 웹에서 처음 받은 사람이
+    /// 스토어 앱으로 스스로 업데이트하면 업데이트다.
+    @Test("웹에서 받은 사람이 스토어 앱 API 로 다시 받으면 업데이트다")
+    func laterApiDownloadIsUpdate() async throws {
+        try await withMigratedApp { app in
+            let (admin, _) = try await app.makeUser(email: "admin@example.com", role: .admin)
+            let (_, version) = try await Self.makeSignedStoreApp(on: app, owner: admin)
+            let (_, token) = try await app.makeUser(email: "user@example.com", role: .user)
+
+            try await app.testing().test(
+                .GET, "/get/download", headers: .sessionCookie(token)
+            ) { #expect($0.status == .seeOther) }
+            try await app.testing().test(
+                .GET, APIPath.download(versionID: try version.requireID()), headers: .sessionCookie(token)
+            ) { #expect($0.status == .ok) }
+
+            let kinds = try await Download.query(on: app.db).sort(\.$createdAt).all().map(\.kind)
+            #expect(kinds == [.install, .update])
+        }
+    }
+
+    /// 익명 줄은 누구 것인지 몰라 기록으로는 가를 수 없다. API 를 부른 것이 이미 깔린
+    /// 스토어 앱이라 업데이트로 적는다. 아니면 같은 사람이 신규 설치로 두 번 잡힌다.
+    @Test("익명으로 받은 뒤 스토어 앱이 스스로 업데이트해도 업데이트다")
+    func selfUpdateAfterAnonymousGetIsUpdate() async throws {
+        try await withMigratedApp { app in
+            let (admin, _) = try await app.makeUser(email: "admin@example.com", role: .admin)
+            let (_, version) = try await Self.makeSignedStoreApp(on: app, owner: admin)
+            let (_, token) = try await app.makeUser(email: "user@example.com", role: .user)
+
+            try await app.testing().test(.GET, "/get/download") { #expect($0.status == .seeOther) }
+            try await app.testing().test(
+                .GET, APIPath.download(versionID: try version.requireID()), headers: .sessionCookie(token)
+            ) { #expect($0.status == .ok) }
+
+            let kinds = try await Download.query(on: app.db).sort(\.$createdAt).all().map(\.kind)
+            #expect(kinds == [.install, .update])
         }
     }
 
@@ -148,8 +191,10 @@ struct StoreAppPublicPageTests {
             let summary = try await DownloadStats.summary(
                 ofApp: try storeApp.requireID(), on: app.db
             )
-            #expect(summary.total == 3)
-            #expect(summary.people == 1)
+            // 익명 줄은 모두 신규 설치다 (ADR-0086).
+            #expect(summary.all == DownloadStats.Counts(installs: 3, updates: 0))
+            let overview = try await DownloadStats.overview(on: app.db)
+            #expect(overview.activePeople == 1)
         }
     }
 

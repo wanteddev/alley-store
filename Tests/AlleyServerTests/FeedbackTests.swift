@@ -31,7 +31,7 @@ private func seedReleasedVersion(
     let versionID = try version.requireID()
 
     if downloadedByReader {
-        try await Download(userID: try reader.requireID(), versionID: versionID)
+        try await Download(userID: try reader.requireID(), versionID: versionID, kind: .install)
             .save(on: app.db)
     }
 
@@ -124,7 +124,7 @@ struct SubmitFeedbackTests {
                 appID: setup.appID, short: "1.1.0", build: 2, state: .ready, by: setup.owner
             )
             let draftID = try draft.requireID()
-            try await Download(userID: try setup.reader.requireID(), versionID: draftID)
+            try await Download(userID: try setup.reader.requireID(), versionID: draftID, kind: .install)
                 .save(on: app.db)
 
             try await app.testing().test(
