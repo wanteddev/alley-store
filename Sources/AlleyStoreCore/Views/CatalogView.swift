@@ -265,12 +265,12 @@ struct AppRow: View {
                             .truncationMode(.tail)
                             .layoutPriority(-1)
                     }
-                    if let count = app.downloadCount {
+                    if let count = DownloadLabel(app) {
                         // 그림을 글자 안에 넣는다. `Label` 은 그림과 숫자 사이를 넓게 벌려,
                         // 좁은 행에서 개발자 이름이 먼저 잘려 나간다.
-                        Text("\(Image(systemName: "arrow.down.circle")) \(count.formatted())")
+                        Text("\(Image(systemName: "arrow.down.circle")) \(count.number)")
                             .fixedSize()
-                            .accessibilityLabel("다운로드 \(count.formatted())회")
+                            .accessibilityLabel(count.text)
                     }
                     if let rating = app.rating, let average = rating.displayAverage {
                         // 개수를 함께 보인다. 한 명이 준 5.0 과 서른 명이 준 4.6 이 같아
@@ -492,8 +492,8 @@ struct AppDetailView: View {
         if let developers = app.developerNames, !developers.isEmpty {
             parts.append(developers.joined(separator: ", "))
         }
-        if let count = app.downloadCount {
-            parts.append("다운로드 \(count.formatted())회")
+        if let count = DownloadLabel(app) {
+            parts.append(count.text)
         }
         if let rating = app.rating, let average = rating.displayAverage {
             parts.append("★ \(average) (\(rating.count))")
@@ -919,3 +919,25 @@ struct StatusToast: View {
     }
 }
 
+
+/// 앱이 얼마나 퍼졌는지를 보여줄 숫자 (ADR-0086).
+///
+/// 신규 설치를 보여준다. 받아간 횟수 전부를 보여주면 자동 업데이트가 켜진 앱이 버전을
+/// 낼 때마다 숫자가 같이 올라가서 실제보다 많이 쓰이는 것처럼 보인다. 신규 설치를 모르는
+/// 예전 서버에서는 받아간 횟수를 예전 문구 그대로 보여준다.
+struct DownloadLabel {
+    var number: String
+    var text: String
+
+    init?(_ app: AppDTO) {
+        if let installs = app.installCount {
+            number = installs.formatted()
+            text = "신규 설치 \(number)회"
+        } else if let downloads = app.downloadCount {
+            number = downloads.formatted()
+            text = "다운로드 \(number)회"
+        } else {
+            return nil
+        }
+    }
+}
