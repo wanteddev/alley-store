@@ -140,7 +140,10 @@ struct AppListPageTests {
 
     /// 웹 콘솔은 목록을 그릴 때 다운로드 수를 따로 읽어야 한다. 빠뜨리면 모든 앱이 0 이라
     /// 이름순과 같은 순서가 나오고, 스토어 앱의 같은 정렬과 어긋난다.
-    @Test("다운로드 많은 순은 받아간 횟수로 늘어놓는다")
+    ///
+    /// 업데이트는 세지 않는다 (ADR-0086). "가" 를 받아간 것은 다섯 번이지만 신규 설치는
+    /// 둘이라, 세 사람이 새로 받은 "다" 보다 뒤다. 받아간 횟수로 늘어놓으면 앞선다.
+    @Test("많이 설치한 순은 신규 설치로 늘어놓는다")
     func sortsByDownloads() async throws {
         try await withMigratedApp { app in
             let (owner, token) = try await app.makeUser(email: "dev@example.com", role: .developer)
@@ -151,9 +154,14 @@ struct AppListPageTests {
                 let version = try await app.seedVersion(
                     appID: try record.requireID(), short: "1.0", build: 1, state: .released, by: owner
                 )
-                for _ in 0..<count {
-                    try await Download(userID: try owner.requireID(), versionID: try version.requireID())
-                        .save(on: app.db)
+                for index in 0..<count {
+                    let (person, _) = try await app.makeUser(email: "\(bundleID)-\(index)@example.com", role: .user)
+                    try await Download.record(userID: try person.requireID(), version: version, on: app.db)
+                }
+                if name == "가" {
+                    for _ in 0..<4 {
+                        try await Download.record(userID: try owner.requireID(), version: version, on: app.db)
+                    }
                 }
             }
 

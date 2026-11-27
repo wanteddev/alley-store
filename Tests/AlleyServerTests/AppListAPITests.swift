@@ -88,20 +88,25 @@ struct AppListAPITests {
             let old = try await app.seedVersion(appID: appID, short: "1.0", build: 1, state: .released, by: owner)
             let new = try await app.seedVersion(appID: appID, short: "1.1", build: 2, state: .released, by: owner)
             // 같은 사람이 두 번 받아도 두 번이다. 익명(웹에서 받은 것)도 센다.
+            // 신규 설치는 소유자의 첫 번째와 익명 하나, 나머지 둘은 업데이트다 (ADR-0086).
             for version in [old, new, new] {
-                try await Download(userID: try owner.requireID(), versionID: try version.requireID()).save(on: app.db)
+                try await Download.record(userID: try owner.requireID(), version: version, on: app.db)
             }
-            try await Download(userID: nil, versionID: try new.requireID()).save(on: app.db)
+            try await Download.record(userID: nil, version: new, on: app.db)
 
             try await app.testing().test(.GET, APIPath.apps, headers: .sessionCookie(session)) { response in
                 let apps = try response.content.decode([AppDTO].self)
                 #expect(apps.first?.downloadCount == 4)
+                #expect(apps.first?.installCount == 2)
+                #expect(apps.first?.updateCount == 2)
             }
             try await app.testing().test(
                 .GET, "\(APIPath.apps)/\(appID.uuidString)", headers: .sessionCookie(session)
             ) { response in
                 let detail = try response.content.decode(AppDTO.self)
                 #expect(detail.downloadCount == 4)
+                #expect(detail.installCount == 2)
+                #expect(detail.updateCount == 2)
             }
         }
     }
@@ -113,6 +118,7 @@ struct AppListAPITests {
             try await app.testing().test(.GET, APIPath.apps, headers: .sessionCookie(session)) { response in
                 let apps = try response.content.decode([AppDTO].self)
                 #expect(apps.first?.downloadCount == 0)
+                #expect(apps.first?.installCount == 0)
             }
         }
     }

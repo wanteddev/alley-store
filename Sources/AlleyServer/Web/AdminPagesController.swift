@@ -734,8 +734,10 @@ struct AdminPagesController: RouteCollection, Sendable {
             StatsPageContext(
                 page: try await request.pageContext(adminTab: .stats),
                 recentDays: DownloadStats.recentDays,
-                totalDownloads: overview.totalDownloads,
-                recentDownloads: overview.recentDownloads,
+                installs: overview.all.installs,
+                updates: overview.all.updates,
+                recentInstalls: overview.recent.installs,
+                recentUpdates: overview.recent.updates,
                 activePeople: overview.activePeople,
                 apps: overview.rows.map { row in
                     StatsRow(
@@ -747,9 +749,9 @@ struct AdminPagesController: RouteCollection, Sendable {
                         bundleID: AppRegistration.isProvisional(row.bundleID)
                             ? "확인 중"
                             : row.bundleID,
-                        total: row.total,
-                        recent: row.recent,
-                        people: row.people,
+                        installs: row.all.installs,
+                        updates: row.all.updates,
+                        recentInstalls: row.recent.installs,
                         rating: ratings[row.appID]?.displayAverage
                     )
                 }
@@ -1355,10 +1357,10 @@ struct StatsRow: Encodable {
     var id: String
     var name: String
     var bundleID: String
-    var total: Int
-    var recent: Int
-    /// 한 번이라도 받아간 사람 수.
-    var people: Int
+    /// 신규 설치와 업데이트를 나눠 둔다 (ADR-0086).
+    var installs: Int
+    var updates: Int
+    var recentInstalls: Int
     var rating: String?
 }
 
@@ -1366,8 +1368,11 @@ struct StatsPageContext: Encodable {
     var page: PageContext
     /// "최근"이 며칠인지. 화면에 그 숫자를 적어야 오해가 없다.
     var recentDays: Int
-    var totalDownloads: Int
-    var recentDownloads: Int
+    var installs: Int
+    var updates: Int
+    var recentInstalls: Int
+    var recentUpdates: Int
+    /// 한 번이라도 받아간 사람 수.
     var activePeople: Int
     var apps: [StatsRow]
 }

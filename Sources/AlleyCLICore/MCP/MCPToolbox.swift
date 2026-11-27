@@ -170,7 +170,8 @@ enum MCPToolbox {
             name: "app_details",
             description: """
                 스토어 앱 상세에 보이는 정보. 이름, 한 줄 소개(summary), 설명, 분류, 태그, \
-                스크린샷 id 목록(보이는 순서), 동영상이 있는지, 개발자, 최신 출시본, 공유 링크. \
+                스크린샷 id 목록(보이는 순서), 동영상이 있는지, 개발자, 최신 출시본, \
+                다운로드 수(신규 설치 installCount 와 업데이트 updateCount 로 나눠), 공유 링크. \
                 update_app 이나 스크린샷 도구를 부르기 전에 지금 값을 확인할 때 쓴다. \
                 스크린샷 그림 자체는 save_screenshots 로 받는다.
                 """,
@@ -683,7 +684,12 @@ struct AppDetails: Encodable {
     var developers: [String]?
     /// 예: `1.2.0 (34)`. 아직 출시본이 없으면 nil.
     var latestRelease: String?
+    /// 받아간 횟수 전부. 업데이트까지 센다.
     var downloadCount: Int?
+    /// 같은 사람이 이 앱을 처음 받은 횟수와 그 뒤로 다시 받은 횟수 (ADR-0086).
+    /// 앱이 얼마나 퍼졌는지는 `installCount` 로 본다.
+    var installCount: Int?
+    var updateCount: Int?
     var rating: RatingSummary?
     var shareURL: String?
 
@@ -704,6 +710,8 @@ struct AppDetails: Encodable {
         self.developers = app.developerNames
         self.latestRelease = app.latestReleasedVersion.map { "\($0.shortVersion) (\($0.buildNumber))" }
         self.downloadCount = app.downloadCount
+        self.installCount = app.installCount
+        self.updateCount = app.updateCount
         self.rating = app.rating
         self.shareURL = app.shareURL
     }

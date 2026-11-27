@@ -329,7 +329,7 @@ Google 에서는 `hd`(hosted domain) claim 까지 함께 봅니다. 그 claim �
 | `artifacts`      | version_id, kind(unsigned/signed), s3_key, sha256, size    |
 | `signing_jobs`   | version_id, 상태, worker_id, 로그, 시도 횟수                       |
 | `workers`        | 이름, 토큰 해시, 마지막 폴링 시각                                       |
-| `downloads`      | user_id, version_id, timestamp                             |
+| `downloads`      | user_id(익명이면 비어 있음), version_id, 신규 설치/업데이트([ADR-0086](adr/0086-split-downloads-into-installs-and-updates-by-person.md)), timestamp |
 | `deploy_tokens`  | app_id, 이름, 토큰 해시 (CI 업로드용, ADR-0015)                     |
 | `feed_tokens`    | app_id, 이름, 토큰 해시 (Sparkle 피드용, ADR-0017)                 |
 | `user_tokens`    | user_id, 이름, 토큰 해시, 만료 (에이전트용, [ADR-0060](adr/0060-mcp-connects-as-a-person.md)) |
@@ -771,6 +771,10 @@ Slack 채널에 소식을 올립니다 ([ADR-0075](adr/0075-announce-releases-to
 - **월간도 따로 켤 수 있습니다** ([ADR-0081](adr/0081-monthly-store-digest-is-a-separate-opt-in.md)).
   매달 1일 오전 10시에 지난달을 같은 글로 묶어 보냅니다. 기본은 꺼짐이고, 주간과 둘 다 켜면
   둘 다 갑니다. 출시가 드문 스토어는 주간이 거의 비어서 한 달치가 옮겨 붙이기 좋습니다
+- **숫자는 신규 설치와 업데이트로 나눠 적고, 순위는 신규 설치로 매깁니다**
+  ([ADR-0086](adr/0086-split-downloads-into-installs-and-updates-by-person.md)). 같은 사람이 그
+  앱을 처음 받은 것이 신규 설치입니다. 업데이트까지 세면 자동 업데이트가 켜진 앱이 버전을 낼
+  때마다 순위에 오릅니다. 콘솔 통계와 스토어 앱의 "많이 설치한 순" 도 같은 기준입니다
 
 ### 5.10 만료 감시
 

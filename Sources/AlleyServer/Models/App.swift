@@ -224,11 +224,11 @@ extension App {
     /// 부르는데, `/apps/<id>/icon.png` 같은 상대 주소는 호스트가 없어 아무 데도 가지
     /// 않는다. 목록의 아이콘이 모두 빈 자리로 나왔다. 웹 화면은 같은 출처에서 그리므로
     /// 상대 주소로 충분하다.
-    public func toDTO(
+    func toDTO(
         latestReleased: Version? = nil,
         rating: RatingSummary? = nil,
         isStoreApp: Bool = false,
-        downloadCount: Int? = nil,
+        downloads: DownloadStats.Counts? = nil,
         baseURL: String? = nil
     ) throws -> AppDTO {
         AppDTO(
@@ -245,7 +245,9 @@ extension App {
             videoURL: try videoURL(baseURL: baseURL),
             ownerID: $owner.id,
             developerNames: developerNames,
-            downloadCount: downloadCount,
+            downloadCount: downloads?.total,
+            installCount: downloads?.installs,
+            updateCount: downloads?.updates,
             latestReleasedVersion: try latestReleased?.toDTO(),
             rating: rating,
             isStoreApp: isStoreApp ? true : nil,

@@ -68,7 +68,7 @@ public struct AppController: RouteCollection, Sendable {
                 latestReleased: released,
                 rating: ratings[appID],
                 isStoreApp: appID == storeAppID,
-                downloadCount: downloads[appID] ?? 0,
+                downloads: downloads[appID] ?? DownloadStats.Counts(),
                 baseURL: request.application.alleyConfig.publicBaseURL
             )
         }
@@ -126,11 +126,11 @@ public struct AppController: RouteCollection, Sendable {
         for member in app.members { try await member.$user.load(on: request.db) }
         let latest = try await App.latestReleasedVersion(ofApp: appID, on: request.db)
         let rating = try await Feedback.summary(ofApp: appID, on: request.db)
-        let downloads = try await DownloadStats.summary(ofApp: appID, on: request.db).total
+        let downloads = try await DownloadStats.summary(ofApp: appID, on: request.db).all
         return try app.toDTO(
             latestReleased: latest,
             rating: rating,
-            downloadCount: downloads,
+            downloads: downloads,
             baseURL: request.application.alleyConfig.publicBaseURL
         )
     }

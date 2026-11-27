@@ -236,6 +236,8 @@ private func configureMigrations(_ app: Application) {
     // 스토어가 프로비저닝 프로필을 발급해 보관한다 (이슈 #90, ADR-0085).
     app.migrations.add(CreateIssuedProfile())
     app.migrations.add(AddVersionProfileEntitlements())
+    // 받아간 기록을 신규 설치와 업데이트로 가른다 (이슈 #94, ADR-0086).
+    app.migrations.add(AddDownloadKind())
 }
 
 /// 미들웨어 스택.

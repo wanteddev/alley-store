@@ -8,7 +8,10 @@ public enum CatalogSort: String, CaseIterable, Identifiable, Sendable {
     case name
     case rating
     case reviewCount
-    /// 받아간 횟수가 많은 순서. 많이 쓰이는 앱을 찾을 때 쓴다.
+    /// 신규 설치가 많은 순서. 많이 쓰이는 앱을 찾을 때 쓴다.
+    ///
+    /// 업데이트는 세지 않는다 (ADR-0086). 세면 자동 업데이트가 켜진 앱이 버전을 낼 때마다
+    /// 위로 올라온다. `rawValue` 는 저장된 선택과 공유한 주소 때문에 그대로 둔다.
     case downloads
     /// 스토어에 처음 등록된 순서. 새로 생긴 앱을 찾을 때 쓴다.
     case newest
@@ -22,7 +25,7 @@ public enum CatalogSort: String, CaseIterable, Identifiable, Sendable {
         case .name: "이름순"
         case .rating: "별점순"
         case .reviewCount: "리뷰 많은 순"
-        case .downloads: "다운로드 많은 순"
+        case .downloads: "많이 설치한 순"
         case .newest: "최신 등록순"
         case .recentlyUpdated: "최근 업데이트순"
         }
@@ -55,8 +58,9 @@ public enum CatalogSort: String, CaseIterable, Identifiable, Sendable {
             return Self.descending(Self.ratedCount(lhs), Self.ratedCount(rhs))
         case .downloads:
             // 0 은 값이다. 받아간 사람이 없는 앱이고, 별점과 달리 "아직 모름" 이 아니다.
-            // 횟수를 모르는(예전 서버) 앱만 맨 뒤로 보낸다.
-            return Self.descending(lhs.downloadCount, rhs.downloadCount)
+            // 횟수를 모르는(예전 서버) 앱만 맨 뒤로 보낸다. 신규 설치를 모르는 예전
+            // 서버면 받아간 횟수 전부로 견준다.
+            return Self.descending(Self.installs(lhs), Self.installs(rhs))
         case .newest:
             return Self.descending(lhs.createdAt, rhs.createdAt)
         case .recentlyUpdated:
@@ -83,6 +87,10 @@ public enum CatalogSort: String, CaseIterable, Identifiable, Sendable {
     private static func ratedCount(_ app: AppDTO) -> Int? {
         guard let count = app.rating?.count, count > 0 else { return nil }
         return count
+    }
+
+    private static func installs(_ app: AppDTO) -> Int? {
+        app.installCount ?? app.downloadCount
     }
 
     /// 출시 시각이 없는 예전 버전이면 등록 시각으로 대신한다.

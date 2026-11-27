@@ -85,10 +85,7 @@ struct StoreAppGetController: RouteCollection, Sendable {
         // URL 을 내주기 전에 남긴다. 나중에 남기면 URL 만 받고 이력이 빠지는 경로가
         // 생긴다. 로그인해 있으면 그 사람을, 아니면 익명으로 남긴다 (ADR-0049).
         let user = request.auth.get(User.self)
-        try await Download(
-            userID: try user?.requireID(),
-            versionID: try found.version.requireID()
-        ).save(on: request.db)
+        try await Download.record(userID: try user?.requireID(), version: found.version, on: request.db)
 
         let presigned = try await request.artifactStorage.downloadURL(
             key: artifact.storageKey,

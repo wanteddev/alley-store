@@ -27,9 +27,12 @@ enum WeeklyDigest {
 
     // MARK: - 기준
 
-    /// 많이 받은 앱을 몇 개까지 싣나.
+    /// 새로 많이 설치한 앱을 몇 개까지 싣나.
+    ///
+    /// 순위는 신규 설치로 매긴다 (ADR-0086). 업데이트까지 세면 자동 업데이트가 켜진 앱이
+    /// 버전을 낼 때마다 순위에 오른다.
     static let topCount = 3
-    /// 갑자기 많이 받은 앱: 그 기간에 `Cadence.surgeMinimum` 이상이면서 직전 기간의 이 배 이상.
+    /// 신규 설치가 갑자기 늘어난 앱: 그 기간에 `Cadence.surgeMinimum` 이상이면서 직전 기간의 이 배 이상.
     static let surgeRatio = 2
     /// 별점 평균을 믿으려면 몇 명은 남겨야 한다.
     static let ratingMinimumCount = 3
@@ -82,7 +85,7 @@ enum WeeklyDigest {
             }
         }
 
-        /// 갑자기 많이 받은 앱으로 치려면 그 기간에 몇 번 이상 받아야 하나. 월간은 주간의
+        /// 신규 설치가 갑자기 늘어난 앱으로 치려면 그 기간에 몇 번 이상 새로 받아야 하나. 월간은 주간의
         /// 네 배다. 한 달은 네 주가 조금 넘는다.
         var surgeMinimum: Int {
             switch self {
@@ -349,8 +352,11 @@ enum WeeklyDigest {
         var cadence: Cadence
         var storeName: String
         var periodLabel: String
-        var downloads: Int
-        var previousDownloads: Int
+        /// 신규 설치와 업데이트를 나눠 센다 (ADR-0086).
+        var installs: Int
+        var previousInstalls: Int
+        var updates: Int
+        var previousUpdates: Int
         var people: Int
         var previousPeople: Int
         var newApps: [Release] = []
@@ -372,7 +378,7 @@ enum WeeklyDigest {
 
         /// 소식으로 전할 것이 하나도 없는 기간.
         var isQuiet: Bool {
-            downloads == 0 && newApps.isEmpty && updatedApps.isEmpty && feedbackCount == 0
+            installs == 0 && updates == 0 && newApps.isEmpty && updatedApps.isEmpty && feedbackCount == 0
         }
 
         var hasOperations: Bool {
@@ -407,9 +413,11 @@ enum WeeklyDigest {
         let totals = try await sql.raw(
             """
             SELECT
-              COUNT(d.id) FILTER (WHERE d.created_at >= \(bind: period.start) AND d.created_at < \(bind: period.end)) AS downloads,
+              COUNT(d.id) FILTER (WHERE d.kind = 'install' AND d.created_at >= \(bind: period.start) AND d.created_at < \(bind: period.end)) AS installs,
+              COUNT(d.id) FILTER (WHERE d.kind = 'update' AND d.created_at >= \(bind: period.start) AND d.created_at < \(bind: period.end)) AS updates,
               COUNT(DISTINCT d.user_id) FILTER (WHERE d.created_at >= \(bind: period.start) AND d.created_at < \(bind: period.end)) AS people,
-              COUNT(d.id) FILTER (WHERE d.created_at >= \(bind: period.previousStart) AND d.created_at < \(bind: period.start)) AS previous_downloads,
+              COUNT(d.id) FILTER (WHERE d.kind = 'install' AND d.created_at >= \(bind: period.previousStart) AND d.created_at < \(bind: period.start)) AS previous_installs,
+              COUNT(d.id) FILTER (WHERE d.kind = 'update' AND d.created_at >= \(bind: period.previousStart) AND d.created_at < \(bind: period.start)) AS previous_updates,
               COUNT(DISTINCT d.user_id) FILTER (WHERE d.created_at >= \(bind: period.previousStart) AND d.created_at < \(bind: period.start)) AS previous_people
             FROM downloads d JOIN versions v ON v.id = d.version_id
             WHERE \(bind: storeAppID)::uuid IS NULL OR v.app_id <> \(bind: storeAppID)
@@ -419,13 +427,15 @@ enum WeeklyDigest {
             cadence: period.cadence,
             storeName: storeName,
             periodLabel: period.label,
-            downloads: try totals?.decode(column: "downloads", as: Int.self) ?? 0,
-            previousDownloads: try totals?.decode(column: "previous_downloads", as: Int.self) ?? 0,
+            installs: try totals?.decode(column: "installs", as: Int.self) ?? 0,
+            previousInstalls: try totals?.decode(column: "previous_installs", as: Int.self) ?? 0,
+            updates: try totals?.decode(column: "updates", as: Int.self) ?? 0,
+            previousUpdates: try totals?.decode(column: "previous_updates", as: Int.self) ?? 0,
             people: try totals?.decode(column: "people", as: Int.self) ?? 0,
             previousPeople: try totals?.decode(column: "previous_people", as: Int.self) ?? 0
         )
 
-        // 앱별 다운로드. 그 기간과 직전 기간.
+        // 앱별 신규 설치. 그 기간과 직전 기간. 업데이트는 순위에 넣지 않는다 (ADR-0086).
         struct PerApp: Decodable { var app_id: UUID; var current: Int; var previous: Int }
         let perApp = try await sql.raw(
             """
@@ -433,7 +443,8 @@ enum WeeklyDigest {
               COUNT(d.id) FILTER (WHERE d.created_at >= \(bind: period.start) AND d.created_at < \(bind: period.end)) AS current,
               COUNT(d.id) FILTER (WHERE d.created_at >= \(bind: period.previousStart) AND d.created_at < \(bind: period.start)) AS previous
             FROM downloads d JOIN versions v ON v.id = d.version_id
-            WHERE d.created_at >= \(bind: period.previousStart) AND d.created_at < \(bind: period.end)
+            WHERE d.kind = 'install'
+              AND d.created_at >= \(bind: period.previousStart) AND d.created_at < \(bind: period.end)
             GROUP BY v.app_id
             """
         ).all(decoding: PerApp.self)
@@ -641,7 +652,8 @@ enum WeeklyDigest {
         } else {
             sections.append(
                 M.strong("📊 \(cadence.current) 숫자")
-                    + "\n다운로드 \(report.downloads)회\(delta(report.downloads, report.previousDownloads))"
+                    + "\n신규 설치 \(report.installs)회\(delta(report.installs, report.previousInstalls))"
+                    + " · 업데이트 \(report.updates)회\(delta(report.updates, report.previousUpdates))"
                     + " · 받아간 사람 \(report.people)명\(delta(report.people, report.previousPeople))"
             )
             if !report.newApps.isEmpty {
@@ -656,12 +668,12 @@ enum WeeklyDigest {
                 )
             }
             if !report.top.isEmpty {
-                sections.append(M.strong("🔥 많이 받은 앱") + report.top.enumerated().map { index, row in
+                sections.append(M.strong("🔥 새로 많이 설치한 앱") + report.top.enumerated().map { index, row in
                     "\n\(index + 1). \(link(row.app)) \(row.count)회"
                 }.joined())
             }
             if !report.surging.isEmpty {
-                sections.append(M.strong("📈 갑자기 많이 받은 앱") + report.surging.map { row in
+                sections.append(M.strong("📈 신규 설치가 갑자기 늘어난 앱") + report.surging.map { row in
                     let detail = row.previous == 0
                         ? "\(cadence.previous) 0회"
                         : "\(cadence.previous) \(row.previous)회의 \(row.count / row.previous)배"

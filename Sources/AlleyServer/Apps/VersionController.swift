@@ -423,10 +423,12 @@ public struct VersionController: RouteCollection, Sendable {
         }
 
         // URL 을 내주기 전에 남긴다. 나중에 남기면 URL 만 받고 이력이 빠지는 경로가 생긴다.
-        try await Download(
-            userID: try user.requireID(),
-            versionID: try version.requireID()
-        ).save(on: request.db)
+        // 스토어 앱이 자기 자신을 받으면 업데이트다. 이 API 를 부른 것이 이미 깔린
+        // 스토어 앱이다. 처음 받은 `/get` 이 익명이었으면 기록으로는 가를 수 없다 (ADR-0086).
+        let isStoreApp = try await request.storeAppSettings().$app.id == version.$app.id
+        try await Download.record(
+            userID: try user.requireID(), version: version, alreadyInstalled: isStoreApp, on: request.db
+        )
 
         let presigned = try await request.artifactStorage.downloadURL(key: artifact.storageKey)
         return DownloadTicket(
